@@ -88,12 +88,29 @@ inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
 inline constexpr uint64_t pmc_int_enable = 1ull << 20;
 inline constexpr uint64_t pmc_counter_mask = (1ull << 48) - 1;
 inline constexpr uint32_t amd_msr_perf_cntr_global_status_clr = 0xC0000302u;
+inline constexpr uint32_t intel_msr_perf_global_ovf_ctrl = 0x390u;
+inline constexpr uint32_t intel_msr_perf_capabilities = 0x345u;
 
-inline uint64_t pmc_overflow_status_mask() {
+struct PMCOverflowAck {
+  uint32_t msr;
+  uint64_t mask;
+};
+
+inline PMCOverflowAck pmc_overflow_ack_conf() {
+  if (is_intel())
+    return {intel_msr_perf_global_ovf_ctrl, (1ull << pmu_num_counters()) - 1};
   processor::cpuid_result ext_max = processor::cpuid(0x80000000);
   if (ext_max.a >= 0x80000022u && (processor::cpuid(0x80000022).a & 0x1u))
-    return (1ull << pmu_num_counters()) - 1;
-  return 0;
+    return {amd_msr_perf_cntr_global_status_clr,
+            (1ull << pmu_num_counters()) - 1};
+  return {0, 0};
+}
+
+// IA32_PMCx writes are 32-bit sign-extended; the IA32_A_PMCx aliases take the
+// full counter width, which sampling periods beyond 2^31 need.
+inline bool intel_full_width_write() {
+  return (processor::cpuid(1).c & (1u << 15)) &&
+         (processor::rdmsr(intel_msr_perf_capabilities) & (1ull << 13));
 }
 
 inline unsigned pmc_attach_overflow_handler(std::function<void()> handler) {
@@ -107,9 +124,9 @@ inline void pmc_detach_overflow_handler(unsigned vector) {
   idt.unregister_handler(vector);
 }
 
-inline void pmc_ack_overflow(uint64_t status_mask, unsigned vector) {
-  if (status_mask)
-    processor::wrmsr(amd_msr_perf_cntr_global_status_clr, status_mask);
+inline void pmc_ack_overflow(PMCOverflowAck ack, unsigned vector) {
+  if (ack.mask)
+    processor::wrmsr(ack.msr, ack.mask);
   processor::apic->write(processor::apicreg::LVTPC, vector);
 }
 

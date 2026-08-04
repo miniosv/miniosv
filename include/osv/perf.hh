@@ -170,8 +170,10 @@ inline std::vector<PMC> make_default_core_pmcs() {
 #if defined(__x86_64__)
   uint32_t n = pmu_num_counters();
   if (is_intel()) {
+    // IA32_A_PMCx when the CPU supports full-width counter writes.
+    uint32_t ctr = intel_full_width_write() ? 0x4C1u : 0xC1u;
     for (uint32_t i = 0; i < n; ++i)
-      pmcs.emplace_back(0x186u + i, 0xC1u + i, PMClass::CORE);
+      pmcs.emplace_back(0x186u + i, ctr + i, PMClass::CORE);
   } else {
     // AMD "extended" core PMC range (Zen and later): counters live at
     // MSRC001_0200h + 2n / MSRC001_0201h + 2n.
@@ -403,12 +405,12 @@ struct PMCSampler {
   ~PMCSampler() { stop(); }
 
   bool start() {
-    if (pmc || !is_amd() || !(pmc = pmcs.acquire(pmce.pmClass)))
+    if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))
       return false;
-    status_mask = pmc_overflow_status_mask();
+    ack = pmc_overflow_ack_conf();
     vector = pmc_attach_overflow_handler([this] {
       pmc_write_counter(pmc->perfCtr, -period & pmc_counter_mask);
-      pmc_ack_overflow(status_mask, vector);
+      pmc_ack_overflow(ack, vector);
       handler(current_interrupt_frame);
     });
     pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
@@ -432,7 +434,7 @@ private:
   PMCEvent pmce;
   PMC *pmc = nullptr;
   unsigned vector = 0;
-  uint64_t status_mask = 0;
+  PMCOverflowAck ack{};
 };
 #endif
 
