@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -72,8 +73,8 @@ struct PMC {
 
   uint64_t probe() const { return pmc_read(perfCtr); }
 
-  void start_with_conf(uint64_t value) {
-    pmc_write_counter(perfCtr, 0);
+  void start_with_conf(uint64_t value, uint64_t initial = 0) {
+    pmc_write_counter(perfCtr, initial);
     pmc_start_with_conf(perfCtr, perfEvtSel, value);
   }
 
@@ -390,6 +391,50 @@ public:
     printCounterVertical(infoOut, "IPC", getIPC(), eNameWidth);
   }
 };
+
+#if defined(__x86_64__)
+struct PMCSampler {
+  PMCSampler(uint64_t period, std::function<void(exception_frame *)> handler,
+             PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
+      : period(period), handler(std::move(handler)), pmce(pmce) {
+    enable_pmu();
+  }
+
+  ~PMCSampler() { stop(); }
+
+  bool start() {
+    if (pmc || !is_amd() || !(pmc = pmcs.acquire(pmce.pmClass)))
+      return false;
+    status_mask = pmc_overflow_status_mask();
+    vector = pmc_attach_overflow_handler([this] {
+      pmc_write_counter(pmc->perfCtr, -period & pmc_counter_mask);
+      pmc_ack_overflow(status_mask, vector);
+      handler(current_interrupt_frame);
+    });
+    pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
+                         -period & pmc_counter_mask);
+    return true;
+  }
+
+  void stop() {
+    if (!pmc)
+      return;
+    pmc->stop();
+    pmc_detach_overflow_handler(vector);
+    pmcs.release(pmc);
+    pmc = nullptr;
+  }
+
+private:
+  PMCSelectCore pmcs{make_default_core_pmcs()};
+  uint64_t period;
+  std::function<void(exception_frame *)> handler;
+  PMCEvent pmce;
+  PMC *pmc = nullptr;
+  unsigned vector = 0;
+  uint64_t status_mask = 0;
+};
+#endif
 
 struct BenchmarkParameters {
 
