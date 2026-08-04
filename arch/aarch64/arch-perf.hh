@@ -3,9 +3,13 @@
 // ARMv8-A PMU back-end for osv/perf.hh.
 // Targets Ampere-1a, Neoverse V1 and Neoverse V2.
 
+#include "drivers/acpi.hh"
+#include "exceptions.hh"
 #include "osv/perf.hh"
 #include <cstdint>
+#include <functional>
 #include <iostream>
+#include <osv/interrupt.hh>
 
 namespace perf {
 
@@ -76,8 +80,12 @@ inline bool is_event_supported(uint64_t value) {
 inline void enable_pmu() {
   uint64_t pmcr;
 
-  // Clear all counter enables.
+  // Clear all counter enables, interrupt enables and overflow flags: they are
+  // unknown at reset, and a stale flag whose interrupt is still enabled keeps
+  // the level-triggered PMU interrupt asserted forever.
   asm volatile("msr pmcntenclr_el0, %0\n\t"
+               "msr pmintenclr_el1, %0\n\t"
+               "msr pmovsclr_el0, %0\n\t"
                "isb" ::"r"((uint64_t)0xFFFFFFFF)
                : "memory");
   // PMCR_EL0: set E|P|C (enable, reset event counters, reset cycle counter);
@@ -151,6 +159,70 @@ inline uint64_t pmc_read(uint32_t counter) {
     // clang-format on
   }
   return value;
+}
+
+inline constexpr uint64_t pmc_int_enable = 0;
+inline constexpr unsigned pmu_default_irq_id = 23;
+
+using PMCIntHandle = ppi_interrupt *;
+
+struct PMCOverflowAck {
+  uint64_t mask;
+};
+
+inline uint64_t pmc_overflow_bit(uint32_t counter) {
+  return counter == (1u << 31) ? (1ull << 31) : (1ull << counter);
+}
+
+inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t counter) {
+  uint64_t bit = pmc_overflow_bit(counter);
+  asm volatile("msr pmintenset_el1, %0\n\tisb" ::"r"(bit) : "memory");
+  return {bit};
+}
+
+inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle) {
+  asm volatile("msr pmovsclr_el0, %0\n\tisb" ::"r"(ack.mask) : "memory");
+}
+
+// PMCR_EL0.LC (bit 6) widens the cycle counter and .LP (bit 7) the event
+// counters to 64 bits; both overflow at bit 31 when clear.
+inline uint64_t pmc_period_value(uint32_t counter, uint64_t period) {
+  uint64_t pmcr;
+  asm volatile("mrs %0, pmcr_el0" : "=r"(pmcr));
+  uint64_t wide = counter == (1u << 31) ? (pmcr & (1ull << 6)) : (pmcr & (1ull << 7));
+  return wide ? -period : (-period & 0xFFFFFFFFull);
+}
+
+// The PMU overflow interrupt is a PPI whose id the firmware reports per cpu in
+// the MADT GICC entries.
+inline unsigned pmu_irq_id() {
+  auto madt =
+      reinterpret_cast<const acpi::madt *>(acpi::find_table(ACPI_SIG_MADT));
+  if (!madt)
+    return pmu_default_irq_id;
+  auto subtable = reinterpret_cast<const char *>(madt + 1);
+  auto madt_end = reinterpret_cast<const char *>(madt) + madt->header.length;
+  while (subtable < madt_end) {
+    auto s = reinterpret_cast<const acpi::madt_subtable *>(subtable);
+    if (s->type == acpi::MADT_GICC) {
+      auto gicc = reinterpret_cast<const acpi::madt_gicc *>(s);
+      if ((gicc->flags & acpi::MADT_ENABLED) &&
+          gicc->performance_interrupt_gsiv)
+        return gicc->performance_interrupt_gsiv;
+    }
+    subtable += s->length;
+  }
+  return pmu_default_irq_id;
+}
+
+inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
+  return new ppi_interrupt(gic::irq_type::IRQ_TYPE_LEVEL, pmu_irq_id(),
+                           std::move(handler));
+}
+
+inline void pmc_detach_overflow_handler(PMCIntHandle irq) {
+  asm volatile("msr pmintenclr_el1, %0\n\tisb" ::"r"(~0ull) : "memory");
+  delete irq;
 }
 
 namespace PERF_COUNT_HW {

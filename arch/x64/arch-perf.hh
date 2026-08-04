@@ -87,6 +87,12 @@ inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
 
 inline constexpr uint64_t pmc_int_enable = 1ull << 20;
 inline constexpr uint64_t pmc_counter_mask = (1ull << 48) - 1;
+
+using PMCIntHandle = unsigned;
+
+inline uint64_t pmc_period_value(uint32_t, uint64_t period) {
+  return -period & pmc_counter_mask;
+}
 inline constexpr uint32_t amd_msr_perf_cntr_global_status_clr = 0xC0000302u;
 inline constexpr uint32_t intel_msr_perf_global_ovf_ctrl = 0x390u;
 inline constexpr uint32_t intel_msr_perf_capabilities = 0x345u;
@@ -96,7 +102,7 @@ struct PMCOverflowAck {
   uint64_t mask;
 };
 
-inline PMCOverflowAck pmc_overflow_ack_conf() {
+inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
   if (is_intel())
     return {intel_msr_perf_global_ovf_ctrl, (1ull << pmu_num_counters()) - 1};
   processor::cpuid_result ext_max = processor::cpuid(0x80000000);
@@ -113,18 +119,18 @@ inline bool intel_full_width_write() {
          (processor::rdmsr(intel_msr_perf_capabilities) & (1ull << 13));
 }
 
-inline unsigned pmc_attach_overflow_handler(std::function<void()> handler) {
+inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
   unsigned vector = idt.register_handler(std::move(handler));
   processor::apic->write(processor::apicreg::LVTPC, vector);
   return vector;
 }
 
-inline void pmc_detach_overflow_handler(unsigned vector) {
+inline void pmc_detach_overflow_handler(PMCIntHandle vector) {
   processor::apic->write(processor::apicreg::LVTPC, 1u << 16);
   idt.unregister_handler(vector);
 }
 
-inline void pmc_ack_overflow(PMCOverflowAck ack, unsigned vector) {
+inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle vector) {
   if (ack.mask)
     processor::wrmsr(ack.msr, ack.mask);
   processor::apic->write(processor::apicreg::LVTPC, vector);

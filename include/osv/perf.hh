@@ -394,7 +394,6 @@ public:
   }
 };
 
-#if defined(__x86_64__)
 struct PMCSampler {
   PMCSampler(uint64_t period, std::function<void(exception_frame *)> handler,
              PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
@@ -407,14 +406,14 @@ struct PMCSampler {
   bool start() {
     if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))
       return false;
-    ack = pmc_overflow_ack_conf();
+    ack = pmc_overflow_ack_conf(pmc->perfCtr);
     vector = pmc_attach_overflow_handler([this] {
-      pmc_write_counter(pmc->perfCtr, -period & pmc_counter_mask);
+      pmc_write_counter(pmc->perfCtr, pmc_period_value(pmc->perfCtr, period));
       pmc_ack_overflow(ack, vector);
       handler(current_interrupt_frame);
     });
     pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
-                         -period & pmc_counter_mask);
+                         pmc_period_value(pmc->perfCtr, period));
     return true;
   }
 
@@ -433,10 +432,9 @@ private:
   std::function<void(exception_frame *)> handler;
   PMCEvent pmce;
   PMC *pmc = nullptr;
-  unsigned vector = 0;
+  PMCIntHandle vector{};
   PMCOverflowAck ack{};
 };
-#endif
 
 struct BenchmarkParameters {
 
