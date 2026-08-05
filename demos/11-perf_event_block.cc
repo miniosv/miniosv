@@ -14,18 +14,19 @@
 constexpr unsigned iterations{1u << 20};
 
 extern "C" void osv_app_main() {
-  // Use default counters
-  perf::PerfEvent e{true};
-  // Add additional counter (LLC accesses)
-  e.registerCounter(perf::PERF_COUNT_HW::STALL_FRONTEND);
-  // Start measuring
-  e.startCounters();
-  for (volatile unsigned i{0}; i < iterations; i += 1)
-    ;
-  // Stop measuring
-  e.stopCounters();
-  // Print results with scale factor = 1
-  e.printReport(std::cout, 1);
-
+  perf::PerfEvent perf;
+  perf::BenchmarkParameters params;
+  // Repeat some measurement 4 times
+  for (uint64_t reps{0}; reps < 4; ++reps) {
+    // Add index of current run to output
+    params.setParam("run", reps);
+    // Counters are started in constructor
+    perf::PerfEventBlock perfBlock(perf, iterations, params, reps == 0);
+    // Your benchmark goes here
+    for (volatile unsigned i{0}; i < iterations; i += 1) {
+    }
+    // Counters are automatically stopped and printed on destruction of
+    // perfEventBlock
+  }
   osv::poweroff();
 }
