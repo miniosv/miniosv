@@ -1,0 +1,17 @@
+# C++ only, and first: libc++ has to precede include/api in the search path.
+If:
+  PathMatch: .*\.(cc|cpp|hh|hpp)$
+CompileFlags:
+  Add: [-std=gnu++20, -nostdinc++, -isystem, build/libcxx/x64/include/c++/v1,
+        -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE]
+
+---
+# Include paths for the freestanding x64 build (see INCLUDES in the Makefile).
+# Relative, so they need a compilation database to anchor them: bear -- make.
+CompileFlags:
+  Add: [-I., -Iinclude, -Iarch/x64, -Iarch/common, -isystem, include/api,
+        -isystem, include/api/x64, -isystem, build/release.x64/gen/include,
+        -isystem, external/boost, -isystem,
+        external/llvm-project/libunwind/include, -D_KERNEL, -D__OSV__,
+        -D__OSV_CORE__, -D__BSD_VISIBLE=1, -DARCH_STRING=x86_64]
+  Remove: [-MD, -MT, -MP, -Werror]
