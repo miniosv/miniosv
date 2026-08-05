@@ -77,9 +77,21 @@ inline bool is_event_supported(uint64_t value) {
   return true;
 }
 
-inline void enable_pmu() {
-  uint64_t pmcr;
+// PMCR_EL0 control bits.
+inline constexpr uint64_t pmcr_e = 1ull << 0;
+inline constexpr uint64_t pmcr_p = 1ull << 1;
+inline constexpr uint64_t pmcr_c = 1ull << 2;
+inline constexpr uint64_t pmcr_d = 1ull << 3;
+inline constexpr uint64_t pmcr_lc = 1ull << 6;
+inline constexpr uint64_t pmcr_lp = 1ull << 7;
 
+inline uint64_t pmcr_read() {
+  uint64_t pmcr;
+  asm volatile("mrs %0, pmcr_el0" : "=r"(pmcr));
+  return pmcr;
+}
+
+inline void enable_pmu() {
   // Clear all counter enables, interrupt enables and overflow flags: they are
   // unknown at reset, and a stale flag whose interrupt is still enabled keeps
   // the level-triggered PMU interrupt asserted forever.
@@ -88,16 +100,19 @@ inline void enable_pmu() {
                "msr pmovsclr_el0, %0\n\t"
                "isb" ::"r"((uint64_t)0xFFFFFFFF)
                : "memory");
-  // PMCR_EL0: set E|P|C (enable, reset event counters, reset cycle counter);
-  // clear D (cycle counter divider).
-  asm volatile("mrs %0, pmcr_el0\n\t"
-               "orr %0, %0, #0b111\n\t"
-               "and %0, %0, #~0b1000\n\t"
-               "msr pmcr_el0, %0\n\t"
-               "isb\n\t"
-               : "=&r"(pmcr)
-               :
-               : "memory");
+
+  // LC|LP widen the counters to 64 bits; LP is RES0 before FEAT_PMUv3p5.
+  uint64_t pmcr = (pmcr_read() | pmcr_e | pmcr_p | pmcr_c | pmcr_lc | pmcr_lp) &
+                  ~pmcr_d;
+  asm volatile("msr pmcr_el0, %0\n\tisb" ::"r"(pmcr) : "memory");
+
+  static bool warned = false;
+  if (!warned && !(pmcr_read() & pmcr_lp)) {
+    warned = true;
+    std::cout << "This PMU has no FEAT_PMUv3p5: the event counters are 32 bits "
+                 "wide and wrap after 2^32 events."
+              << std::endl;
+  }
 }
 
 inline void pmc_stop(uint32_t counter_mask) {
@@ -184,13 +199,16 @@ inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle) {
   asm volatile("msr pmovsclr_el0, %0\n\tisb" ::"r"(ack.mask) : "memory");
 }
 
-// PMCR_EL0.LC (bit 6) widens the cycle counter and .LP (bit 7) the event
-// counters to 64 bits; both overflow at bit 31 when clear.
+// Where overflow is recorded, not the register size: PMCCNTR_EL0 counts 64-bit
+// whatever LC says, only PMEVCNTR<n>_EL0 is 32-bit when LP is clear.
+inline uint32_t pmc_overflow_width(uint32_t counter) {
+  uint64_t bit = counter == (1u << 31) ? pmcr_lc : pmcr_lp;
+  return (pmcr_read() & bit) ? 64 : 32;
+}
+
 inline uint64_t pmc_period_value(uint32_t counter, uint64_t period) {
-  uint64_t pmcr;
-  asm volatile("mrs %0, pmcr_el0" : "=r"(pmcr));
-  uint64_t wide = counter == (1u << 31) ? (pmcr & (1ull << 6)) : (pmcr & (1ull << 7));
-  return wide ? -period : (-period & 0xFFFFFFFFull);
+  uint32_t width = pmc_overflow_width(counter);
+  return width >= 64 ? -period : (-period & ((1ull << width) - 1));
 }
 
 // The PMU overflow interrupt is a PPI whose id the firmware reports per cpu in

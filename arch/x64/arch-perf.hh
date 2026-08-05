@@ -86,12 +86,26 @@ inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
 inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
 
 inline constexpr uint64_t pmc_int_enable = 1ull << 20;
-inline constexpr uint64_t pmc_counter_mask = (1ull << 48) - 1;
 
 using PMCIntHandle = unsigned;
 
-inline uint64_t pmc_period_value(uint32_t, uint64_t period) {
-  return -period & pmc_counter_mask;
+// Fixed in hardware; no x86 bit widens it. AMD core PMCs are 48 bits.
+inline uint32_t pmc_overflow_width(uint32_t = 0) {
+  if (is_intel()) {
+    uint32_t width = (processor::cpuid(0x0A).a >> 16) & 0xFFu;
+    if (width)
+      return width;
+  }
+  return 48;
+}
+
+inline uint64_t pmc_counter_mask(uint32_t ctr = 0) {
+  uint32_t width = pmc_overflow_width(ctr);
+  return width >= 64 ? ~0ull : ((1ull << width) - 1);
+}
+
+inline uint64_t pmc_period_value(uint32_t ctr, uint64_t period) {
+  return -period & pmc_counter_mask(ctr);
 }
 inline constexpr uint32_t amd_msr_perf_cntr_global_status_clr = 0xC0000302u;
 inline constexpr uint32_t intel_msr_perf_global_ovf_ctrl = 0x390u;

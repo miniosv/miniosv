@@ -38,7 +38,7 @@ inline constexpr uint32_t midr_neoverse_v1 = 0x410F'D400u;
 
 // Arch back-end provides:
 //   - pmc_read / pmc_write_counter / pmc_start_with_conf / pmc_stop
-//   - enable_pmu, pmu_num_counters, is_midr
+//   - enable_pmu, pmu_num_counters, pmc_overflow_width, is_midr
 //   - x86 only: cpu_vendor, is_intel, is_amd
 //   - namespace perf::PERF_COUNT_HW event catalogue
 #include <arch-perf.hh>
