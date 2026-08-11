@@ -44,9 +44,6 @@
 #ifndef CONF_memory_page_batch_size
 #define CONF_memory_page_batch_size 32
 #endif
-#ifndef CONF_memory_tracker
-#define CONF_memory_tracker 0
-#endif
 #ifndef CONF_preempt
 #define CONF_preempt 1
 #endif
