@@ -5,7 +5,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 
+#include "apic.hh"
+#include "exceptions.hh"
 #include "osv/perf.hh"
 #include "processor.hh"
 
@@ -81,6 +84,71 @@ inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
 }
 
 inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
+
+inline constexpr uint64_t pmc_int_enable = 1ull << 20;
+
+using PMCIntHandle = unsigned;
+
+// Fixed in hardware; no x86 bit widens it. AMD core PMCs are 48 bits.
+inline uint32_t pmc_overflow_width(uint32_t = 0) {
+  if (is_intel()) {
+    uint32_t width = (processor::cpuid(0x0A).a >> 16) & 0xFFu;
+    if (width)
+      return width;
+  }
+  return 48;
+}
+
+inline uint64_t pmc_counter_mask(uint32_t ctr = 0) {
+  uint32_t width = pmc_overflow_width(ctr);
+  return width >= 64 ? ~0ull : ((1ull << width) - 1);
+}
+
+inline uint64_t pmc_period_value(uint32_t ctr, uint64_t period) {
+  return -period & pmc_counter_mask(ctr);
+}
+inline constexpr uint32_t amd_msr_perf_cntr_global_status_clr = 0xC0000302u;
+inline constexpr uint32_t intel_msr_perf_global_ovf_ctrl = 0x390u;
+inline constexpr uint32_t intel_msr_perf_capabilities = 0x345u;
+
+struct PMCOverflowAck {
+  uint32_t msr;
+  uint64_t mask;
+};
+
+inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
+  if (is_intel())
+    return {intel_msr_perf_global_ovf_ctrl, (1ull << pmu_num_counters()) - 1};
+  processor::cpuid_result ext_max = processor::cpuid(0x80000000);
+  if (ext_max.a >= 0x80000022u && (processor::cpuid(0x80000022).a & 0x1u))
+    return {amd_msr_perf_cntr_global_status_clr,
+            (1ull << pmu_num_counters()) - 1};
+  return {0, 0};
+}
+
+// IA32_PMCx writes are 32-bit sign-extended; the IA32_A_PMCx aliases take the
+// full counter width, which sampling periods beyond 2^31 need.
+inline bool intel_full_width_write() {
+  return (processor::cpuid(1).c & (1u << 15)) &&
+         (processor::rdmsr(intel_msr_perf_capabilities) & (1ull << 13));
+}
+
+inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
+  unsigned vector = idt.register_handler(std::move(handler));
+  processor::apic->write(processor::apicreg::LVTPC, vector);
+  return vector;
+}
+
+inline void pmc_detach_overflow_handler(PMCIntHandle vector) {
+  processor::apic->write(processor::apicreg::LVTPC, 1u << 16);
+  idt.unregister_handler(vector);
+}
+
+inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle vector) {
+  if (ack.mask)
+    processor::wrmsr(ack.msr, ack.mask);
+  processor::apic->write(processor::apicreg::LVTPC, vector);
+}
 
 namespace PERF_COUNT_HW {
 // PerfEvtSel encoding: bit22=EN, bit17=OS, bit16=USR, bits8-15=UMask,
