@@ -1,6 +1,5 @@
 {
   description = "miniosv — slim unikernel OS";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
@@ -64,7 +63,6 @@
         ];
 
         ovmf_prefix = if system == "x86_64-linux" then "OVMF" else "AAVMF";
-
       in
       {
         devShells = rec {
@@ -96,7 +94,7 @@
             ++ default.nativeBuildInputs;
           });
 
-          cli = aws.overrideAttrs (default: {
+          cli = aws.overrideAttrs (aws: {
             nativeBuildInputs =
               with pkgs;
               [
@@ -107,8 +105,11 @@
               ]
               ++ aws.nativeBuildInputs;
           });
-        };
 
+          rust = cli.overrideAttrs (cli: {
+            nativeBuildInputs = [ pkgs.cargo ] ++ cli.nativeBuildInputs;
+          });
+        };
       }
     );
 }
