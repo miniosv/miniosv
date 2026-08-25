@@ -1,0 +1,8 @@
+# The OSv-inherited files are 4-space with the function brace on its own line,
+# so format the lines you touch, not the file.
+BasedOnStyle: LLVM
+Standard: c++20
+
+# Include order is hand-ordered and load-bearing.
+SortIncludes: Never
+IncludeBlocks: Preserve
