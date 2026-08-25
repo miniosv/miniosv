@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -37,7 +38,7 @@ inline constexpr uint32_t midr_neoverse_v1 = 0x410F'D400u;
 
 // Arch back-end provides:
 //   - pmc_read / pmc_write_counter / pmc_start_with_conf / pmc_stop
-//   - enable_pmu, pmu_num_counters, is_midr
+//   - enable_pmu, pmu_num_counters, pmc_overflow_width, is_midr
 //   - x86 only: cpu_vendor, is_intel, is_amd
 //   - namespace perf::PERF_COUNT_HW event catalogue
 #include <arch-perf.hh>
@@ -72,8 +73,8 @@ struct PMC {
 
   uint64_t probe() const { return pmc_read(perfCtr); }
 
-  void start_with_conf(uint64_t value) {
-    pmc_write_counter(perfCtr, 0);
+  void start_with_conf(uint64_t value, uint64_t initial = 0) {
+    pmc_write_counter(perfCtr, initial);
     pmc_start_with_conf(perfCtr, perfEvtSel, value);
   }
 
@@ -169,8 +170,10 @@ inline std::vector<PMC> make_default_core_pmcs() {
 #if defined(__x86_64__)
   uint32_t n = pmu_num_counters();
   if (is_intel()) {
+    // IA32_A_PMCx when the CPU supports full-width counter writes.
+    uint32_t ctr = intel_full_width_write() ? 0x4C1u : 0xC1u;
     for (uint32_t i = 0; i < n; ++i)
-      pmcs.emplace_back(0x186u + i, 0xC1u + i, PMClass::CORE);
+      pmcs.emplace_back(0x186u + i, ctr + i, PMClass::CORE);
   } else {
     // AMD "extended" core PMC range (Zen and later): counters live at
     // MSRC001_0200h + 2n / MSRC001_0201h + 2n.
@@ -389,6 +392,48 @@ public:
     // Derived metrics.
     printCounterVertical(infoOut, "IPC", getIPC(), eNameWidth);
   }
+};
+
+struct PMCSampler {
+  PMCSampler(uint64_t period, std::function<void(exception_frame *)> handler,
+             PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
+      : period(period), handler(std::move(handler)), pmce(pmce) {
+    enable_pmu();
+  }
+
+  ~PMCSampler() { stop(); }
+
+  bool start() {
+    if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))
+      return false;
+    ack = pmc_overflow_ack_conf(pmc->perfCtr);
+    vector = pmc_attach_overflow_handler([this] {
+      pmc_write_counter(pmc->perfCtr, pmc_period_value(pmc->perfCtr, period));
+      pmc_ack_overflow(ack, vector);
+      handler(current_interrupt_frame);
+    });
+    pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
+                         pmc_period_value(pmc->perfCtr, period));
+    return true;
+  }
+
+  void stop() {
+    if (!pmc)
+      return;
+    pmc->stop();
+    pmc_detach_overflow_handler(vector);
+    pmcs.release(pmc);
+    pmc = nullptr;
+  }
+
+private:
+  PMCSelectCore pmcs{make_default_core_pmcs()};
+  uint64_t period;
+  std::function<void(exception_frame *)> handler;
+  PMCEvent pmce;
+  PMC *pmc = nullptr;
+  PMCIntHandle vector{};
+  PMCOverflowAck ack{};
 };
 
 struct BenchmarkParameters {
