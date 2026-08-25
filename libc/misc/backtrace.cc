@@ -42,7 +42,7 @@ static _Unwind_Reason_Code worker (struct _Unwind_Context *ctx, void *data)
 // pos starts at -1 so the callback skips the wrapper's own frame; the
 // returned buffer starts at the direct caller. _Unwind_Backtrace may leave
 // a trailing null "top-most caller" that we trim.
-static int unwind(void **pc, unsigned long *cfas, int nr)
+int osv::unwind(void **pc, unsigned long *cfas, int nr)
 {
     worker_arg arg { pc, cfas, nr, -1, 0 };
     _Unwind_Backtrace(worker, &arg);
@@ -51,11 +51,6 @@ static int unwind(void **pc, unsigned long *cfas, int nr)
     }
     return arg.pos > 0 ? arg.pos : 0;
 }
-
-int backtrace(void **buffer, int size)         { return unwind(buffer, nullptr, size); }
-int backtrace_safe(void **pc, int nr)          { return unwind(pc, nullptr, nr); }
-int backtrace_safe(void **pc, unsigned long *cfa, int nr)
-                                                { return unwind(pc, cfa, nr); }
 
 #include <osv/demangle.hh>
 #include <string.h>

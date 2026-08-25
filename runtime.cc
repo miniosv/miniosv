@@ -79,7 +79,7 @@ static void print_backtrace(void)
 
     debug_ll("\n[backtrace]\n");
 
-    len = backtrace_safe(addrs, cfas, 128);
+    len = osv::unwind(addrs, cfas, 128);
 
     /* Start with i=1 to skip abort(const char *)  */
     int frame = 0;

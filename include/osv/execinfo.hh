@@ -8,13 +8,13 @@
 #ifndef EXECINFO_HH_
 #define EXECINFO_HH_
 
-// Backtrace helper used by the panic/abort path. Walks .eh_frame via
-// libgcc's _Unwind_Backtrace, so no frame pointers are required.
-int backtrace_safe(void** pc, int nr);
-
-// Same as backtrace_safe(), but also fills `cfa` with the canonical frame
-// address of each frame. Useful for spotting recursion / stack overflow.
-int backtrace_safe(void** pc, unsigned long* cfa, int nr);
-
+namespace osv {
+  // walks DWARF via compiler's _Unwind_Backtrace, fills `pc` with up to 
+  // `nr` return addresses, starting at the direct caller
+  // returns how many it wrote
+  // [note] if `cfa` is non-null it also receives a canoncial frame address of
+  // frame (useful for recursion, stack overflow)
+  int unwind(void** pc, unsigned long* cfa, int nr); 
+}
 
 #endif /* EXECINFO_HH_ */
