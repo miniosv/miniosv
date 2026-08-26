@@ -564,7 +564,6 @@ $(app_mode_dep): app_mode_phony
 # ELF loader). Per-arch: the relocation-type switch differs (x64 vs aarch64).
 objects += arch/$(arch)/relocate.o
 objects += arch/$(arch)/arch-setup.o
-objects += arch/$(arch)/signal.o
 objects += arch/$(arch)/arch-cpu.o
 objects += arch/$(arch)/backtrace.o
 objects += arch/$(arch)/smp.o
@@ -662,23 +661,8 @@ libc += misc/getopt.o
 libc += misc/getopt_long.o
 libc += misc/backtrace.o
 
-
-
-
 libc += prng/random.o
 libc += random.o
-
-
-libc += arch/$(arch)/setjmp/sigsetjmp.o
-libc += signal/block.o
-libc += signal/siglongjmp.o
-ifeq ($(arch),x64)
-libc += arch/$(arch)/ucontext/getcontext.o
-libc += arch/$(arch)/ucontext/setcontext.o
-libc += arch/$(arch)/ucontext/start_context.o
-libc += arch/$(arch)/ucontext/ucontext.o
-endif
-
 
 $(out)/libc/stdio/vfprintf.o: COMMON += $(wno-maybe-uninitialized)
 $(out)/libc/stdio/vfscanf.o: COMMON += $(wno-maybe-uninitialized)
@@ -687,9 +671,6 @@ libc += string/explicit_bzero.o
 libc += string/strerror_r.o
 libc += string/stresep.o
 
-
-
-
 libc += unistd/sync.o
 libc += unistd/getpgid.o
 libc += unistd/setpgid.o
@@ -697,7 +678,6 @@ libc += unistd/getpgrp.o
 libc += unistd/getppid.o
 libc += unistd/getsid.o
 libc += unistd/ttyname_r.o
-
 
 libc += pthread.o
 libc += pthread_barrier.o
@@ -709,7 +689,6 @@ libc += io.o
 # stubs) and the printf-extension stubs.
 libc += stdio/llvm_stdio.o
 libc += time.o
-libc += signal.o
 libc += mman.o
 libc += sem.o
 # pipe, af_local (unix sockets), mount, eventfd, timerfd, shm and inotify all
@@ -842,7 +821,6 @@ libcxx_dep = $(libcxx_archives)
 # for vfprintf %Lf, logl). strchrnul + mbsinit now come from the llvm-libc
 # archive (entrypoints libc.src.string.strchrnul / libc.src.wchar.mbsinit).
 libc += math/longdouble.o
-libc += string/strsignal.o
 # OSv-owned env management (getenv/setenv/putenv/unsetenv) - getenv on baremetal
 # is OS-coupled, so llvm-libc cannot supply it. time() routes to OSv's clock.
 libc += env/env.o
