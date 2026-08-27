@@ -39,4 +39,6 @@ downloaded_packages
 external/llvm-project/
 aws
 
-/app/
+# `nix build` output symlinks
+/result
+/result-*

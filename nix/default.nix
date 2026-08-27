@@ -83,6 +83,20 @@ let
         builtins.any (p: rel == p || lib.hasPrefix (p + "/") rel) keep || builtins.elem rel keepAncestor;
     };
 
+  # Kernel source for the image build: everything except app/. The selected
+  # app is staged into app/ from its own `appSrc`, so the in-tree default app
+  # must stay out of this source — otherwise editing app/app.cc would
+  # invalidate the image derivation of every *other* app too.
+  kernelSrc =
+    let
+      root = toString self;
+    in
+    builtins.path {
+      path = self;
+      name = "miniosv-kernel-src";
+      filter = path: _: lib.removePrefix (root + "/") (toString path) != "app";
+    };
+
   # Per-arch toolchain sub-builds (independent of the selected app).
   toolchainFor =
     targetArch:
@@ -119,10 +133,10 @@ let
             toolchain
             llvmSource
             targetArch
-            self
             appName
             appSrc
             ;
+          src = kernelSrc;
         }
         // archToolchains.${targetArch}
       );
@@ -167,15 +181,26 @@ let
     type = "app";
     program = "${pkg}/bin/${binName}";
   };
+
+  # `nix build .` / `nix run .` build and boot the in-tree app for the host
+  # arch. This is the only host-arch alias, and it exists only because the app
+  # named `default` ships with the repo, so there is an obvious thing to mean.
+  # (`apps` here is the function argument, not the output attr below.)
+  hostLinuxName = arches.${hostArch}.linuxName;
+  hasDefaultApp = apps ? default;
+  defaultVariant = variants."default-${hostLinuxName}" or null;
 in
 {
-  packages = lib.mapAttrs (_: v: v.miniosv) variants;
+  packages =
+    lib.mapAttrs (_: v: v.miniosv) variants
+    // lib.optionalAttrs hasDefaultApp { default = defaultVariant.miniosv; };
 
   apps =
     lib.mapAttrs (_: v: mkApp "miniosv-run" v.run) variants
     // lib.mapAttrs' (
       name: v: lib.nameValuePair "aws-deploy-${name}" (mkApp "miniosv-aws-deploy" v.awsDeploy)
-    ) variants;
+    ) variants
+    // lib.optionalAttrs hasDefaultApp { default = mkApp "miniosv-run" defaultVariant.run; };
 
   devShells = import ./devshells.nix { inherit pkgs toolchain system; };
 }

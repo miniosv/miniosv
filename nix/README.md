@@ -27,32 +27,38 @@ Per system (`x86_64-linux`, `aarch64-linux`), the flake exposes:
 
 ```
 packages.<app>-<arch>              # loader.img (build only)
+packages.default                   # = packages.default-<host arch>
 apps.<app>-<arch>                  # QEMU boot wrapper
+apps.default                       # = apps.default-<host arch>
 apps.aws-deploy-<app>-<arch>       # AWS deploy wrapper
 devShells.{default,aws,cli}
 ```
 
 Where `<app>` is any key from the `apps` attrset in `flake.nix`
-(`hello`, `miniduckdb`, `cwd`, …) and `<arch>` is `x86_64` or
+(`default`, `miniduckdb`, `cwd`, …) and `<arch>` is `x86_64` or
 `aarch64`.
 
-There is no `packages.default` / `apps.default` / host-arch alias. Every
-target names both an app and an arch, and only things in `apps.*` are
-runnable via `nix run`.
+There is exactly one alias: `packages.default` and `apps.default` point at
+the in-tree app (`../app/`) built for the *host* arch, so plain `nix build .`
+and `nix run .` do the obvious thing. Every other target names both an app
+and an arch explicitly, and only things in `apps.*` are runnable via
+`nix run`.
 
 ## Common commands
 
 ```bash
 # Build an image (no run):
-nix build .#hello-x86_64
+nix build .                           # in-tree app, host arch
+nix build .#default-x86_64
 nix build .#miniduckdb-aarch64        # cross-compiled on any host
 
 # Boot under QEMU (KVM when target == host, else TCG):
-nix run .#hello-x86_64
+nix run .                             # in-tree app, host arch
+nix run .#default-x86_64
 nix run .#miniduckdb-aarch64          # TCG on x86 host: pass -cpu cortex-a72 -c 1 for a sane boot
 
 # Deploy on AWS (see scripts/aws-deploy.py --help):
-nix run .#aws-deploy-hello-x86_64 -- eu-north-1 c5.large --attach
+nix run .#aws-deploy-default-x86_64 -- eu-north-1 c5.large --attach
 nix run .#aws-deploy-miniduckdb-aarch64    -- eu-north-1 c7g.large --attach
 
 # Enter a dev shell (all toolchain + qemu on $PATH):
@@ -80,7 +86,7 @@ inputs.my-app = {
 
 # in outputs:
 apps = {
-  hello = ./examples/hello;
+  default = ./app;
   inherit miniduckdb;
   my-app = my-app;                   # <-- new
   cwd = cwd;
@@ -90,7 +96,7 @@ apps = {
 Each app source must be miniOSv-compliant: it needs a top-level `Makefile`
 that the kernel build includes via `include app/Makefile` (declaring
 `app-objects = ...`) and a C/C++ entry point `extern "C" void
-osv_app_main()`. See `../examples/hello/` for the minimum viable shape.
+osv_app_main()`. See `../app/` for the minimum viable shape.
 
 Rebuilding: after `nix flake lock --update-input my-app`, the full matrix
 of `packages.my-app-{x86_64,aarch64}` and the two matching `apps.*` entries
@@ -143,7 +149,7 @@ derivations by store hash — so switching apps or editing app sources
 never rebuilds them. Confirm with:
 
 ```bash
-for app in hello miniduckdb; do
+for app in default miniduckdb; do
   echo "=== $app ==="
   nix derivation show .#$app-x86_64 | \
     jq -r '.[].inputs.drvs | keys[]' | \
@@ -159,11 +165,16 @@ scripts actually read. So editing `README.md`, `flake.nix`, wrappers in
 `nix/`, or any app tree does **not** invalidate them. Only edits to a
 whitelisted path trigger a rebuild.
 
+The image derivation itself uses `kernelSrc` (also in `default.nix`), which
+is the repo *minus* `app/`. The selected app is staged into `app/` from its
+own source, so editing the in-tree app rebuilds `packages.default-*` only —
+not `miniduckdb-*` or `cwd-*`.
+
 ## Debugging what will be built
 
 ```bash
 nix flake show                          # all outputs
 nix flake check --no-build              # eval only
-nix path-info .#hello-x86_64   # store path of the image
-nix derivation show .#hello-x86_64 | jq '.[].inputs.drvs | keys'
+nix path-info .#default-x86_64   # store path of the image
+nix derivation show .#default-x86_64 | jq '.[].inputs.drvs | keys'
 ```

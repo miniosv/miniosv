@@ -7,7 +7,7 @@
   llvmLibc,
   libcxx,
   targetArch,
-  self,
+  src,
   appName,
   appSrc,
 }:
@@ -19,7 +19,9 @@ stdenv.mkDerivation {
   pname = "miniosv-${appName}";
   version = archName;
 
-  src = self;
+  # The kernel tree minus app/ (see `kernelSrc` in default.nix): the selected
+  # app is staged below from `appSrc`.
+  inherit src;
 
   nativeBuildInputs = toolchain.buildInputs;
 
@@ -42,6 +44,9 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
 
+    # Start from an empty app/ so no file of a previously staged app can
+    # survive into this build.
+    rm -rf app
     mkdir -p app
     cp -r ${appSrc}/. app/
     chmod -R u+w app

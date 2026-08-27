@@ -33,16 +33,16 @@
     "miniduckdb": {
       "flake": false,
       "locked": {
-        "lastModified": 1784368965,
-        "narHash": "sha256-xVUPiGe9cEFYcMTLm31hS5ic3tWFptdwza6g76kLQgA=",
-        "owner": "Martin-Lndbl",
+        "lastModified": 1787293786,
+        "narHash": "sha256-d/PWNO4VK9cOoj1df6cAKBCuAU5YGzvgh6dNQ6gcJs0=",
+        "owner": "TUM-DSE",
         "repo": "miniduckdb",
-        "rev": "da84133efc13f6e011ca5e98471676077b6145c9",
+        "rev": "6774cd50d75bc94bf0ebbeecbd3d9060ad457b97",
         "type": "github"
       },
       "original": {
-        "owner": "Martin-Lndbl",
-        "ref": "miniosv-trunk",
+        "owner": "TUM-DSE",
+        "ref": "srg_mainline",
         "repo": "miniduckdb",
         "type": "github"
       }
