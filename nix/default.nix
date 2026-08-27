@@ -83,19 +83,13 @@ let
         builtins.any (p: rel == p || lib.hasPrefix (p + "/") rel) keep || builtins.elem rel keepAncestor;
     };
 
-  # Kernel source for the image build: everything except app/. The selected
-  # app is staged into app/ from its own `appSrc`, so the in-tree default app
-  # must stay out of this source — otherwise editing app/app.cc would
-  # invalidate the image derivation of every *other* app too.
-  kernelSrc =
-    let
-      root = toString self;
-    in
-    builtins.path {
-      path = self;
-      name = "miniosv-kernel-src";
-      filter = path: _: lib.removePrefix (root + "/") (toString path) != "app";
-    };
+  # Kernel source minus app/: each app is staged there from its own appSrc, so
+  # editing the in-tree app must not invalidate every other app's image.
+  kernelSrc = builtins.path {
+    path = self;
+    name = "miniosv-kernel-src";
+    filter = p: _: p != "${self}/app";
+  };
 
   # Per-arch toolchain sub-builds (independent of the selected app).
   toolchainFor =
@@ -182,25 +176,22 @@ let
     program = "${pkg}/bin/${binName}";
   };
 
-  # `nix build .` / `nix run .` build and boot the in-tree app for the host
-  # arch. This is the only host-arch alias, and it exists only because the app
-  # named `default` ships with the repo, so there is an obvious thing to mean.
-  # (`apps` here is the function argument, not the output attr below.)
-  hostLinuxName = arches.${hostArch}.linuxName;
-  hasDefaultApp = apps ? default;
-  defaultVariant = variants."default-${hostLinuxName}" or null;
+  # The one host-arch alias: `nix build .` / `nix run .` mean the in-tree app.
+  hostVariant = variants."default-${arches.${hostArch}.linuxName}";
 in
 {
-  packages =
-    lib.mapAttrs (_: v: v.miniosv) variants
-    // lib.optionalAttrs hasDefaultApp { default = defaultVariant.miniosv; };
+  packages = lib.mapAttrs (_: v: v.miniosv) variants // {
+    default = hostVariant.miniosv;
+  };
 
   apps =
     lib.mapAttrs (_: v: mkApp "miniosv-run" v.run) variants
     // lib.mapAttrs' (
       name: v: lib.nameValuePair "aws-deploy-${name}" (mkApp "miniosv-aws-deploy" v.awsDeploy)
     ) variants
-    // lib.optionalAttrs hasDefaultApp { default = mkApp "miniosv-run" defaultVariant.run; };
+    // {
+      default = mkApp "miniosv-run" hostVariant.run;
+    };
 
   devShells = import ./devshells.nix { inherit pkgs toolchain system; };
 }

@@ -165,10 +165,8 @@ scripts actually read. So editing `README.md`, `flake.nix`, wrappers in
 `nix/`, or any app tree does **not** invalidate them. Only edits to a
 whitelisted path trigger a rebuild.
 
-The image derivation itself uses `kernelSrc` (also in `default.nix`), which
-is the repo *minus* `app/`. The selected app is staged into `app/` from its
-own source, so editing the in-tree app rebuilds `packages.default-*` only —
-not `miniduckdb-*` or `cwd-*`.
+The image derivation uses `kernelSrc` (the repo *minus* `app/`), so editing
+the in-tree app rebuilds `packages.default-*` only — not the other apps.
 
 ## Debugging what will be built
 

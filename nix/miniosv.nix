@@ -19,9 +19,7 @@ stdenv.mkDerivation {
   pname = "miniosv-${appName}";
   version = archName;
 
-  # The kernel tree minus app/ (see `kernelSrc` in default.nix): the selected
-  # app is staged below from `appSrc`.
-  inherit src;
+  inherit src; # kernel tree minus app/ (kernelSrc in default.nix)
 
   nativeBuildInputs = toolchain.buildInputs;
 
@@ -44,10 +42,8 @@ stdenv.mkDerivation {
   buildPhase = ''
     runHook preBuild
 
-    # Start from an empty app/ so no file of a previously staged app can
-    # survive into this build.
-    rm -rf app
-    mkdir -p app
+    # Stage the app. rm first: no file of another app may survive into app/.
+    rm -rf app && mkdir app
     cp -r ${appSrc}/. app/
     chmod -R u+w app
 
