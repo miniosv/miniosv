@@ -101,10 +101,10 @@ jobs:
 
       - name: Build test kernel
         run: |
-          make app=tests arch=${{ matrix.arch }} -j"$(nproc)"
+          make app=test arch=${{ matrix.arch }} -j"$(nproc)"
           # Also build the bootable GPT/ESP disk image the smoke test boots as
           # an NVMe disk (needs mtools + gdisk, installed above).
-          make app=tests arch=${{ matrix.arch }} \
+          make app=test arch=${{ matrix.arch }} \
             build/release.${{ matrix.arch }}/loader.img
 
       - name: Dump toolchain build logs on failure

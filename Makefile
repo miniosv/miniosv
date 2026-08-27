@@ -537,17 +537,13 @@ endif
 # The application is statically linked into the kernel image and entered via
 # osv_app_main(). There is no separate app .so or filesystem image.
 #
-# Two build modes select which application is linked in. Each application lives
+# The build mode select which application is linked in. Each application lives
 # in its own directory with a Makefile fragment that lists its objects in
 # $(app-objects); the kernel compiles and links them with its own flags.
 #   make            -> the user application   (app/)
-#   make app=tests  -> the test application   (test/)
-app ?= default
-ifeq ($(app),tests)
-include test/Makefile
-else
-include app/Makefile
-endif
+#   make app=test   -> the test application   (test/)
+app ?= app
+include $(app)/Makefile
 objects += $(app-objects)
 
 # Record the selected app mode so that switching between `make` and
