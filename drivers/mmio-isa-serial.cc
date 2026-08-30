@@ -6,6 +6,7 @@
  */
 
 #include "mmio-isa-serial.hh"
+#include <osv/mem/mapping.hh>
 
 namespace console {
 
@@ -54,7 +55,7 @@ void mmio_isa_serial_console::early_init_polled(u64 mmio_phys_address,
 void mmio_isa_serial_console::memory_map()
 {
     if (_phys_mmio_address) {
-        _addr_mmio = mmio_map(_phys_mmio_address, mmu::page_size, "isa_serial_console");
+        _addr_mmio = mmio_map(_phys_mmio_address, mem::mapping::page_size, "isa_serial_console");
     }
 }
 
