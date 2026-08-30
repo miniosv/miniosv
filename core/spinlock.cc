@@ -7,18 +7,14 @@
 
 #include <osv/spinlock.h>
 #include <osv/sched.hh>
+#include "processor.hh"
 
 void spin_lock(spinlock_t *sl)
 {
     sched::preempt_disable();
     while (__sync_lock_test_and_set(&sl->_lock, 1)) {
         while (sl->_lock) {
-#ifdef __x86_64__
-            __asm __volatile("pause");
-#endif
-#ifdef __aarch64__
-            __asm __volatile("isb sy");
-#endif
+            processor::spin_hint();
         }
     }
 }
@@ -43,12 +39,7 @@ void np_spin_lock(np_spinlock_t *sl)
 {
     while (__sync_lock_test_and_set(&sl->_lock, 1)) {
         while (sl->_lock) {
-#ifdef __x86_64__
-            __asm __volatile("pause");
-#endif
-#ifdef __aarch64__
-            __asm __volatile("isb sy");
-#endif
+            processor::spin_hint();
         }
     }
 }
