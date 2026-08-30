@@ -36,8 +36,9 @@ and `mtools` + `gdisk` to build the disk image. Override the firmware with the `
 `OVMF_VARS` or `AAVMF_CODE`/`AAVMF_VARS` env vars. `make smoke-test` boots the image headless and
 checks it reaches the kernel.
 
-The default app (`app/app.cc`) is a conformance gate that prints a `PASS`/`FAIL` line per check.
-Build the larger test suite with `make app=tests`.
+The default app (`app/app.cc`) is a hello-world placeholder: it prints a greeting and then spins,
+so the boot output stays on the console. Build the test suite instead with `make app=tests` — it
+is a conformance gate that prints a `PASS`/`FAIL` line per check.
 
 ## License
 

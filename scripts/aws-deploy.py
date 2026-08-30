@@ -179,16 +179,16 @@ def stream_console(ec2_client, instance_id, poll_interval=5):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("src", nargs="?", default="build/last/loader.img",
-                        help="Path to the source image file to upload (default: build/last/loader.img)")
     parser.add_argument("region", help="AWS region to deploy to (e.g. us-east-1)")
     parser.add_argument("instance", help="EC2 instance type to launch (e.g. t3.micro)")
+    parser.add_argument("--image", default="build/last/loader.img",
+                        help="Path to the source image file to upload (default: build/last/loader.img)")
     parser.add_argument("--attach", action="store_true", help="Stream system log and terminate instance on Ctrl+C")
     args = parser.parse_args()
 
     aws_login()
 
-    src, region, instance = args.src, args.region, args.instance
+    src, region, instance = args.image, args.region, args.instance
     instance_arch = get_instance_arch(instance)
 
     if src.endswith(".raw"):

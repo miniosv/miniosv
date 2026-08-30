@@ -90,7 +90,7 @@ else
 $(error unsupported architecture $(arch))
 endif
 
-CROSS_PREFIX ?= $(if $(filter-out $(arch),$(host_arch)),$(arch)-linux-gnu-)
+CROSS_PREFIX ?= $(if $(filter-out $(arch),$(host_arch)),$(ARCH_STR)-linux-gnu-)
 # Pure-LLVM toolchain: one clang/clang++ that cross-compiles by target triple
 # (no per-arch GNU gcc). When building for a non-host arch, point clang at the
 # target with --target=<triple> derived from CROSS_PREFIX (strip trailing '-').
