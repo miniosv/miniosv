@@ -35,8 +35,8 @@ devShells.{default,aws,cli}
 ```
 
 Where `<app>` is any key from the `apps` attrset in `flake.nix`
-(`default`, `miniduckdb`, `cwd`, …) and `<arch>` is `x86_64` or
-`aarch64`.
+(`default`, `cwd`, and whatever a downstream flake adds) and `<arch>` is
+`x86_64` or `aarch64`.
 
 There is exactly one alias: `packages.default` and `apps.default` point at
 the in-tree app (`../app/`) built for the *host* arch, so plain `nix build .`
@@ -50,16 +50,16 @@ and an arch explicitly, and only things in `apps.*` are runnable via
 # Build an image (no run):
 nix build .                           # in-tree app, host arch
 nix build .#default-x86_64
-nix build .#miniduckdb-aarch64        # cross-compiled on any host
+nix build .#default-aarch64           # cross-compiled on any host
 
 # Boot under QEMU (KVM when target == host, else TCG):
 nix run .                             # in-tree app, host arch
 nix run .#default-x86_64
-nix run .#miniduckdb-aarch64          # TCG on x86 host: pass -cpu cortex-a72 -c 1 for a sane boot
+nix run .#default-aarch64             # TCG on x86 host: pass -cpu cortex-a72 -c 1 for a sane boot
 
 # Deploy on AWS (see scripts/aws-deploy.py --help):
 nix run .#aws-deploy-default-x86_64 -- eu-north-1 c5.large --attach
-nix run .#aws-deploy-miniduckdb-aarch64    -- eu-north-1 c7g.large --attach
+nix run .#aws-deploy-default-aarch64  -- eu-north-1 c7g.large --attach
 
 # Enter a dev shell (all toolchain + qemu on $PATH):
 nix develop           # default
@@ -87,7 +87,6 @@ inputs.my-app = {
 # in outputs:
 apps = {
   default = ./app;
-  inherit miniduckdb;
   my-app = my-app;                   # <-- new
   cwd = cwd;
 };
@@ -101,6 +100,30 @@ osv_app_main()`. See `../app/` for the minimum viable shape.
 Rebuilding: after `nix flake lock --update-input my-app`, the full matrix
 of `packages.my-app-{x86_64,aarch64}` and the two matching `apps.*` entries
 appears automatically.
+
+The registry ships no applications of its own beyond `default` and `cwd`.
+Ports live in their own repositories and are registered by the flake that
+wants them, so nothing here pins a tree it does not build.
+
+### Build options
+
+An entry may be an attrset instead of a bare source when the application
+needs arguments passed to the kernel `make`:
+
+```nix
+apps = {
+  default = ./app;
+  my-app = {
+    src = my-app;
+    makeFlags = [ "conf_vaccel=0" ];
+  };
+};
+```
+
+`makeFlags` is appended to the `make` command line for every arch, so it
+reaches any variable the top-level Makefile reads (`conf_*`, `mode=debug`).
+Register the same source twice under different names to get both variants
+as separate outputs. A bare source is shorthand for `makeFlags = [ ]`.
 
 ## The `cwd` slot (build from your working directory)
 
@@ -149,7 +172,7 @@ derivations by store hash — so switching apps or editing app sources
 never rebuilds them. Confirm with:
 
 ```bash
-for app in default miniduckdb; do
+for app in default cwd; do
   echo "=== $app ==="
   nix derivation show .#$app-x86_64 | \
     jq -r '.[].inputs.drvs | keys[]' | \

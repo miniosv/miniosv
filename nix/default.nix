@@ -10,20 +10,31 @@ let
   llvmPkgs = pkgs.llvmPackages_20;
   inherit (nixpkgs) lib;
 
+  normalizeApp =
+    entry:
+    if builtins.isAttrs entry && entry ? src then
+      { makeFlags = [ ]; } // entry
+    else
+      {
+        src = entry;
+        makeFlags = [ ];
+      };
+  normalizedApps = lib.mapAttrs (_: normalizeApp) apps;
+
   # A source is the cwd sentinel if it still carries the marker file. In
   # that case we swap in a derivation that fails to build with usage
   # instructions, so eval (nix flake check) stays clean but any `nix build`
   # against it prints the message.
   checkAppSrc =
-    appName: appSrc:
-    if builtins.pathExists (appSrc + "/CWD_SENTINEL") then
+    appName: app:
+    if builtins.pathExists (app.src + "/CWD_SENTINEL") then
       pkgs.runCommandNoCC "miniosv-${appName}-needs-override" { } ''
         cat >&2 <<'EOF'
         The `${appName}` flake input has not been overridden. Point it at
         your app tree, e.g.:
 
             nix build --override-input ${appName} "path:$PWD" \
-                github:seb711/miniosv#${appName}-x86_64
+                github:miniosv/miniosv#${appName}-x86_64
 
         Or, from a downstream flake:
 
@@ -32,8 +43,8 @@ let
         exit 1
       ''
     else
-      appSrc;
-  checkedApps = lib.mapAttrs checkAppSrc apps;
+      app.src;
+  checkedApps = lib.mapAttrs checkAppSrc normalizedApps;
 
   # Per-arch metadata. Add a new target arch by adding a row here.
   arches = {
@@ -114,6 +125,7 @@ let
       targetArch,
       appName,
       appSrc,
+      appMakeFlags,
     }:
     let
       arch = arches.${targetArch};
@@ -129,6 +141,7 @@ let
             targetArch
             appName
             appSrc
+            appMakeFlags
             ;
           src = kernelSrc;
         }
@@ -158,7 +171,7 @@ let
 
   # Cross-product: apps × arches → { "<app>-<linuxName>" = variant; ... }.
   variants = lib.concatMapAttrs (
-    appName: _appSrc:
+    appName: app:
     # Force the sentinel check by taking appSrc from checkedApps; an
     # unoverridden `cwd` throws with a helpful message when this attr is
     # forced (e.g. by nix build .#cwd-x86_64).
@@ -167,9 +180,10 @@ let
       targetArch: arch:
       lib.nameValuePair "${appName}-${arch.linuxName}" (buildVariant {
         inherit targetArch appName appSrc;
+        appMakeFlags = app.makeFlags;
       })
     ) arches
-  ) apps;
+  ) normalizedApps;
 
   mkApp = binName: pkg: {
     type = "app";

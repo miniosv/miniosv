@@ -10,6 +10,8 @@
   src,
   appName,
   appSrc,
+  # Extra `make` arguments the application asked for (conf_* format)
+  appMakeFlags ? [ ],
 }:
 
 let
@@ -78,7 +80,9 @@ stdenv.mkDerivation {
     patchShebangs scripts
 
     make -j"$NIX_BUILD_CORES" arch=${archName} \
-        STRIP=llvm-strip OBJCOPY=llvm-objcopy READELF=llvm-readelf
+        STRIP=llvm-strip OBJCOPY=llvm-objcopy READELF=llvm-readelf${
+          lib.optionalString (appMakeFlags != [ ]) " \\\n        ${lib.escapeShellArgs appMakeFlags}"
+        }
 
     runHook postBuild
   '';
