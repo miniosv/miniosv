@@ -30,23 +30,6 @@
         "type": "github"
       }
     },
-    "miniduckdb": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1787293786,
-        "narHash": "sha256-d/PWNO4VK9cOoj1df6cAKBCuAU5YGzvgh6dNQ6gcJs0=",
-        "owner": "TUM-DSE",
-        "repo": "miniduckdb",
-        "rev": "6774cd50d75bc94bf0ebbeecbd3d9060ad457b97",
-        "type": "github"
-      },
-      "original": {
-        "owner": "TUM-DSE",
-        "ref": "srg_mainline",
-        "repo": "miniduckdb",
-        "type": "github"
-      }
-    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1781216227,
@@ -67,7 +50,6 @@
       "inputs": {
         "cwd": "cwd",
         "flake-utils": "flake-utils",
-        "miniduckdb": "miniduckdb",
         "nixpkgs": "nixpkgs"
       }
     },
