@@ -23,6 +23,12 @@ inline void wfi()
     asm volatile ("wfi" ::: "memory");
 }
 
+// Tell the cpu this is a spin, so it can let another thread of its own run.
+inline void spin_hint()
+{
+    asm volatile ("yield" ::: "memory");
+}
+
 inline void irq_enable()
 {
     asm volatile ("msr daifclr, #2; isb; " ::: "memory");
