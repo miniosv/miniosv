@@ -37,7 +37,7 @@ void secondary_bringup(sched::cpu* c)
 {
     __sync_fetch_and_add(&smp_processors, 1);
     c->idle_thread->start();
-    c->load_balance();
+    c->on_cpu_up();  
 }
 
 void smp_init()
@@ -89,10 +89,9 @@ void smp_launch()
         if (c->arch.smp_idx == 0) {
             sched::thread::current()->_detached_state->_cpu = c;
             // c->init_on_cpu() already done in main().
-            (new sched::thread([c] { c->load_balance(); },
-                    sched::thread::attr().pin(c).name(name)))->start();
             c->init_idle_thread();
             c->idle_thread->start();
+            c->on_cpu_up(); 
             continue;
         }
         sched::thread::attr attr;
