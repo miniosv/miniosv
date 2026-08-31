@@ -75,6 +75,8 @@ SECTIONS
     HIDDEN(_init_array_late_start = .);
     .init_array_late : AT(ADDR(.init_array_late) - OSV_KERNEL_VM_SHIFT) {
         KEEP(*(.init_array.100))
+        /* Defer the application's own constructors for the same reason. */
+        KEEP(*app/*(.init_array .init_array.* .ctors .ctors.*))
     } : text
     HIDDEN(_init_array_late_end = .);
     HIDDEN(_init_array_start = .);

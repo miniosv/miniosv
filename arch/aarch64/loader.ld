@@ -100,6 +100,8 @@ SECTIONS
     HIDDEN(_init_array_late_start = .);
     .init_array_late : {
         KEEP(*(.init_array.100))
+        /* Defer the application's own constructors for the same reason. */
+        KEEP(*app/*(.init_array .init_array.* .ctors .ctors.*))
     } : text
     HIDDEN(_init_array_late_end = .);
     . = ALIGN(16);
