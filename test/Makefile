@@ -12,6 +12,7 @@
 #   - os-libc      : C libc surface conformance checks (string/stdlib/math/...)
 #   - os-iostream  : C++ iostreams / localization checks (std::cout etc.)
 #   - os-memmove   : memmove() overlap-correctness regression test
+#   - os-string    : memset()/memcmp() correctness + throughput
 #   - os-stress    : concurrency / allocator / TLS stress tests
 
 app-objects =  test/osv_tests.o
@@ -19,4 +20,5 @@ app-objects += test/os-features.o
 app-objects += test/os-libc.o
 app-objects += test/os-iostream.o
 app-objects += test/os-memmove.o
+app-objects += test/os-string.o
 app-objects += test/os-stress.o
