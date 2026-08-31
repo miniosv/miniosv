@@ -54,23 +54,33 @@ ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
 }
 
 extern "C" OSV_LIBC_API
-ssize_t read(int fd, void *, size_t)
+ssize_t read(int fd, void *buf, size_t count)
 {
     if (fd == 0) {
-        return 0; // no console input: report EOF
+        if (count == 0) {
+            return 0;
+        }
+        return console::read(static_cast<char *>(buf), count);
     }
     errno = EBADF;
     return -1;
 }
 
 extern "C" OSV_LIBC_API
-ssize_t readv(int fd, const struct iovec *, int)
+ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
 {
-    if (fd == 0) {
-        return 0;
+    if (fd != 0) {
+        errno = EBADF;
+        return -1;
     }
-    errno = EBADF;
-    return -1;
+    // Fill only the first non-empty buffer: read() blocks for at least one
+    // byte, and a reader wanting more will come back.
+    for (int i = 0; i < iovcnt; i++) {
+        if (iov[i].iov_len) {
+            return console::read(static_cast<char *>(iov[i].iov_base), iov[i].iov_len);
+        }
+    }
+    return 0;
 }
 
 extern "C" OSV_LIBC_API
@@ -119,6 +129,8 @@ extern "C" OSV_LIBC_API int fdatasync(int) { return 0; }
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
 #include <sys/shm.h>
+#include <chrono>
+#include <osv/sched.hh>
 
 extern "C" {
 
@@ -193,9 +205,120 @@ OSV_LIBC_API struct dirent *readdir(DIR *) { errno = EBADF; return nullptr; }
 OSV_LIBC_API int closedir(DIR *) { errno = EBADF; return -1; }
 OSV_LIBC_API int dirfd(DIR *) { errno = EINVAL; return -1; }
 
-OSV_LIBC_API int poll(struct pollfd *, nfds_t, int) { errno = ENOSYS; return -1; }
-OSV_LIBC_API int ppoll(struct pollfd *, nfds_t, const struct timespec *, const sigset_t *) { errno = ENOSYS; return -1; }
-OSV_LIBC_API int select(int, fd_set *, fd_set *, fd_set *, struct timeval *) { errno = ENOSYS; return -1; }
+// select()/poll() answer for the standard streams and nothing else: they are
+// the only file descriptors that exist.
+//
+// Waiting is a poll-and-yield loop for the same reason console input is polled:
+// the only waiter is a shell sitting at a prompt.
+namespace {
+
+bool std_fd_ready(int fd)
+{
+    if (fd == 0) {
+        return console::input_available();
+    }
+    return fd == 1 || fd == 2;      // output is always ready
+}
+
+//! timeout_ms < 0 waits indefinitely.
+bool wait_for_std_input(long timeout_ms)
+{
+    using namespace std::chrono;
+    auto deadline = steady_clock::now() + milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+    for (;;) {
+        if (console::input_available()) {
+            return true;
+        }
+        if (timeout_ms == 0) {
+            return false;
+        }
+        if (timeout_ms > 0 && steady_clock::now() >= deadline) {
+            return false;
+        }
+        sched::thread::yield();
+    }
+}
+
+} // namespace
+
+OSV_LIBC_API int poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+    bool wants_input = false;
+    for (nfds_t i = 0; i < nfds; i++) {
+        fds[i].revents = 0;
+        if (fds[i].fd < 0 || fds[i].fd > 2) {
+            fds[i].revents = POLLNVAL;
+            continue;
+        }
+        if (fds[i].fd == 0 && (fds[i].events & POLLIN)) {
+            wants_input = true;
+        }
+    }
+    if (wants_input) {
+        wait_for_std_input(timeout);
+    }
+
+    int ready = 0;
+    for (nfds_t i = 0; i < nfds; i++) {
+        if (fds[i].revents) {
+            ready++;
+            continue;
+        }
+        if ((fds[i].events & POLLIN) && std_fd_ready(fds[i].fd)) {
+            fds[i].revents |= POLLIN;
+        }
+        if ((fds[i].events & POLLOUT) && (fds[i].fd == 1 || fds[i].fd == 2)) {
+            fds[i].revents |= POLLOUT;
+        }
+        if (fds[i].revents) {
+            ready++;
+        }
+    }
+    return ready;
+}
+
+OSV_LIBC_API int ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *ts,
+                       const sigset_t *)
+{
+    int timeout = ts ? static_cast<int>(ts->tv_sec * 1000 + ts->tv_nsec / 1000000) : -1;
+    return poll(fds, nfds, timeout);
+}
+
+OSV_LIBC_API int select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+                        struct timeval *timeout)
+{
+    if (nfds > 3) {
+        nfds = 3;                   // nothing above fd 2 can ever be ready
+    }
+    const bool wants_stdin = readfds && nfds > 0 && FD_ISSET(0, readfds);
+
+    if (wants_stdin) {
+        long ms = timeout ? (timeout->tv_sec * 1000 + timeout->tv_usec / 1000) : -1;
+        wait_for_std_input(ms);
+    }
+
+    int ready = 0;
+    for (int fd = 0; fd < nfds; fd++) {
+        if (readfds && FD_ISSET(fd, readfds)) {
+            if (std_fd_ready(fd)) {
+                ready++;
+            } else {
+                FD_CLR(fd, readfds);
+            }
+        }
+        if (writefds && FD_ISSET(fd, writefds)) {
+            if (fd == 1 || fd == 2) {
+                ready++;
+            } else {
+                FD_CLR(fd, writefds);
+            }
+        }
+    }
+    if (exceptfds) {
+        FD_ZERO(exceptfds);
+    }
+    return ready;
+}
 OSV_LIBC_API int epoll_create(int) { errno = ENOSYS; return -1; }
 OSV_LIBC_API int epoll_create1(int) { errno = ENOSYS; return -1; }
 OSV_LIBC_API int epoll_ctl(int, int, int, struct epoll_event *) { errno = ENOSYS; return -1; }

@@ -54,7 +54,7 @@ OSV_LIBC_API
 ssize_t __llvm_libc_stdio_read(void *cookie, char *buf, size_t size)
 {
     if (cookie == &__llvm_libc_stdin_cookie) {
-        return 0; // no console input: report EOF
+        return console::read(buf, size);
     }
     return -EBADF;
 }
@@ -124,6 +124,23 @@ int fseeko(FILE *f, off_t off, int whence)
 
 OSV_LIBC_API
 off_t ftello(FILE *f)
+{
+    errno = ESPIPE;
+    return -1;
+}
+
+/* Fail in all cases because the only file descriptors handled
+* by the libc are standard streams (non-seekable).
+*/
+OSV_LIBC_API
+int fseek(FILE *f, long off, int whence)
+{
+    errno = ESPIPE;
+    return -1;
+}
+
+OSV_LIBC_API
+long ftell(FILE *f)
 {
     errno = ESPIPE;
     return -1;
