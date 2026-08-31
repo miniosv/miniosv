@@ -7,7 +7,6 @@
 
 #include <osv/sched.hh>
 #include <api/sched.h>
-#include "signal.hh"
 #include <pthread.h>
 #include <errno.h>
 #include <mutex>
@@ -85,7 +84,7 @@ namespace pthread_private {
 
     class pthread {
     public:
-        explicit pthread(void *(*start)(void *arg), void *arg, sigset_t sigset,
+        explicit pthread(void *(*start)(void *arg), void *arg,
             const thread_attr* attr);
         void start();
         static pthread* from_libc(pthread_t p);
@@ -109,11 +108,10 @@ namespace pthread_private {
         thread_attr() : stack_begin{}, stack_size{CONF_threads_default_pthread_stack_size}, guard_size{4096}, detached{false}, cpuset{nullptr}, cpu{nullptr} {}
     };
 
-    pthread::pthread(void *(*start)(void *arg), void *arg, sigset_t sigset,
+    pthread::pthread(void *(*start)(void *arg), void *arg, 
                      const thread_attr* attr)
             : _thread(sched::thread::make([=, this] {
                 current_pthread = to_libc();
-                sigprocmask(SIG_SETMASK, &sigset, nullptr);
                 _retval = start(arg);
             }, attributes(attr ? *attr : thread_attr()), false, true))
     {
@@ -200,8 +198,6 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
         void *(*start_routine) (void *), void *arg)
 {
     pthread *t;
-    sigset_t sigset;
-    sigprocmask(SIG_SETMASK, nullptr, &sigset);
 
     thread_attr tmp;
     cpu_set_t tmp_cpuset;
@@ -242,7 +238,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                "CPU set.\n The cpu_set_t provided will be ignored.\n");
     }
 
-    t = new pthread(start_routine, arg, sigset, &tmp);
+    t = new pthread(start_routine, arg, &tmp);
     *thread = t->to_libc();
     t->start();
     return 0;
@@ -565,7 +561,8 @@ int pthread_rwlock_unlock(pthread_rwlock_t *rw)
 OSV_LIBC_API
 int pthread_sigmask(int how, const sigset_t* set, sigset_t* oldset)
 {
-    return sigprocmask(how, set, oldset);
+    WARN_STUBBED();
+    return EINVAL;
 }
 
 #ifdef LOCKFREE_MUTEX
@@ -1031,18 +1028,6 @@ int pthread_getschedparam(pthread_t thread, int *policy,
 OSV_LIBPTHREAD_API
 int pthread_kill(pthread_t thread, int sig)
 {
-    // We are assuming that if pthread_kill() is called with thread
-    // equal to pthread_self(), then most likely it was called by
-    // raise() (see below) so we simply delegate to kill().
-    // This an approximation as it reality multithreaded apps
-    // may actually send signal to the current thread by directly
-    // calling pthread_kill() for a reason and then thread specific mask
-    // would apply, etc. But OSv does not really support sending signals to
-    // specific threads so we are silently ignoring such case for now.
-    if (thread == current_pthread) {
-        return kill(getpid(), sig);
-    }
-
     WARN_STUBBED();
     return EINVAL;
 }

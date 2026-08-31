@@ -1138,8 +1138,6 @@ static void run_exit_notifiers()
 
 thread::~thread()
 {
-    cancel_this_thread_alarm();
-
     if (!_attr._detached) {
         join();
     }
