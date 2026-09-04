@@ -19,8 +19,11 @@ import sys
 import argparse
 import os
 import errno
+import pty
 import shutil
 import tempfile
+
+import symbolize
 
 devnull = open('/dev/null', 'w')
 
@@ -167,9 +170,18 @@ def start_osv_qemu(options):
 
         try:
             stty_save()
-            ret = subprocess.call(cmdline, env=os.environ.copy())
-            if ret != 0:
-                sys.exit("qemu failed.")
+            if options.symbolize:
+                log_path = os.path.join(workdir, 'console.log')
+                ret = _run_with_tee(cmdline, log_path)
+                if ret != 0:
+                    print("qemu exited with status %d." % ret, file=sys.stderr)
+                with open(log_path) as fh:
+                    symbolize.print_from(
+                        fh.read(), symbolize.elf_next_to(options.image_file))
+            else:
+                ret = subprocess.call(cmdline, env=os.environ.copy())
+                if ret != 0:
+                    sys.exit("qemu failed.")
         except OSError as e:
             if e.errno == errno.ENOENT:
                 print("'%s' binary not found. Please install the "
@@ -182,6 +194,20 @@ def start_osv_qemu(options):
             stty_restore()
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+def _run_with_tee(cmdline, log_path):
+    "Run cmdline on a pty, forwarding stdio and copying everything to log_path."
+    log = open(log_path, 'wb')
+    def read(fd):
+        data = os.read(fd, 4096)
+        log.write(data)
+        log.flush()
+        return data
+    try:
+        return pty.spawn(cmdline, read)
+    finally:
+        log.close()
+
 
 def choose_hypervisor(arch):
     # KVM only when the guest arch matches the host and /dev/kvm is usable.
@@ -236,6 +262,9 @@ if __name__ == "__main__":
                         help="passthrough PCI device(s) bound to vfio-pci, e.g. 0000:01:00.0")
     parser.add_argument("--gic-version", action="store", default="3",
                         help="aarch64 GIC version under TCG (default 3)")
+    parser.add_argument("-s", "--symbolize", action="store_true",
+                        help="after qemu exits, run any [backtrace] addresses "
+                             "through llvm-symbolizer against loader.elf")
     cmdargs = parser.parse_args()
 
     # The build output dir is build/<mode>.<arch> (arch as x64 / aarch64), so

@@ -24,7 +24,7 @@
 #define CONF_fs_max_file_descriptors 0x4000
 #endif
 #ifndef CONF_interrupt_stack_size
-#define CONF_interrupt_stack_size 0x1000
+#define CONF_interrupt_stack_size 0x2000
 #endif
 #ifndef CONF_lazy_stack
 #define CONF_lazy_stack 0
@@ -43,9 +43,6 @@
 #endif
 #ifndef CONF_memory_page_batch_size
 #define CONF_memory_page_batch_size 32
-#endif
-#ifndef CONF_memory_tracker
-#define CONF_memory_tracker 0
 #endif
 #ifndef CONF_preempt
 #define CONF_preempt 1

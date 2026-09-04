@@ -346,7 +346,7 @@ EXTRA_LIBS =
 COMMON = $(autodepend) -g -Wall -Wno-pointer-arith $(CFLAGS_WERROR) -Wformat=0 -Wno-format-security \
 	-D __BSD_VISIBLE=1 -U _FORTIFY_SOURCE -fno-stack-protector $(INCLUDES) \
 	$(kernel-defines) \
-	-fno-omit-frame-pointer $(compiler-specific) \
+	$(compiler-specific) \
 	$(conf_compiler_cflags) $(conf_compiler_opt) $(tracing-flags) \
 	-D__OSV__ -DARCH_STRING=$(ARCH_STR) $(EXTRA_FLAGS)
 COMMON += $(standard-includes-flag)
@@ -562,7 +562,6 @@ objects += arch/$(arch)/relocate.o
 objects += arch/$(arch)/arch-setup.o
 objects += arch/$(arch)/signal.o
 objects += arch/$(arch)/arch-cpu.o
-objects += arch/$(arch)/backtrace.o
 objects += arch/$(arch)/smp.o
 objects += arch/$(arch)/tlsdesc.o
 objects += arch/$(arch)/entry.o

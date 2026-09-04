@@ -80,6 +80,23 @@ if grep -q '^#define _LIBUNWIND_CHECK_LINUX_SIGRETURN 1' "$UNWCURSOR"; then
     sed -i 's@^#define _LIBUNWIND_CHECK_LINUX_SIGRETURN 1@// OSv: no Linux signal frames / no syscall ABI - disable sigreturn unwinding@' "$UNWCURSOR"
 fi
 
+# Signal/interrupt frames: stepWithDwarfFDE() hands the raw IP to
+# parseFDEInstructions(), which walks CFI rows while "codeOffset < upToPC -
+# pcStart" - so it returns the row valid strictly *below* the pc. That is what
+# you want for a return address (the call's row sits one byte back), but an
+# interrupt frame's IP is the interrupted instruction itself, so a sample that
+# lands on the first byte of a new CFI row is unwound with the previous row.
+# Landing on the "retq" right after "popq %rbp" then evaluates CFA=rbp+16 with
+# %rbp already restored to a scratch value: a wild CFA, and a fault inside
+# getSavedRegister() - in OSv that is a page fault in interrupt context, which
+# trips assert(sched::preemptable()) in arch/x64/mmu.cc. libgcc biases both the
+# FDE lookup and execute_cfa_program() by "+ signal_frame - 1"; libunwind biases
+# only the lookup (setInfoBasedOnIPRegister()). Bias the CFI walk too.
+# Idempotent.
+if grep -q '^        _addressSpace, pc, (pint_t)_info.unwind_info, _registers,$' "$UNWCURSOR"; then
+    perl -0pi -e 's@^        _addressSpace, pc, \(pint_t\)_info\.unwind_info, _registers,\n        _isSignalFrame, stage2\);\n@        // OSv: an interrupt frame\x27s IP is the interrupted instruction, not a\n        // return address - bias the CFI walk so the row starting at that\n        // address is applied (see the note in scripts/build-libcxx.sh).\n        _addressSpace, pc + (_isSignalFrame ? 1 : 0),\n        (pint_t)_info.unwind_info, _registers, _isSignalFrame, stage2);\n@m' "$UNWCURSOR"
+fi
+
 # 2. configure + build (static, narrow "C"-locale localization, exceptions+RTTI
 #    on, llvm unwinder)
 # Codegen must match the kernel (see COMMON in the top-level Makefile).
@@ -122,7 +139,7 @@ OSV_HEADERS="-isystem $OSV_ROOT/include/api -isystem $OSV_ROOT/include/api/$osv_
 # "unknown rune table for this platform" #error. The kernel build defines the
 # same macro (Makefile, libcxx-includes) so locale.cpp's classic_table here and
 # every ctype<char> consumer there agree on the mask layout.
-KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -fno-omit-frame-pointer -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE $OSV_HEADERS"
+KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -D_LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE $OSV_HEADERS"
 
 # Pure-LLVM cross-compile when targeting a non-host arch: one clang driven at the
 # target triple (no GNU cross toolchain). cmake needs the cross vars explicitly.

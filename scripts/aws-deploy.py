@@ -8,6 +8,8 @@ import signal
 import subprocess
 import time
 import threading
+
+import symbolize
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -141,12 +143,15 @@ def cleanup_aws_resources(ec2_client, instance_id=None, ami_id=None,
                   file=sys.stderr, flush=True)
 
 
-def stream_console(ec2_client, instance_id, poll_interval=5):
+def stream_console(ec2_client, instance_id, poll_interval=5, capture=None):
     """Tail the serial console until KeyboardInterrupt.
 
     Uses full-string overlap detection so that once the console buffer
     (~64 KB) rolls, we keep printing new content instead of silently
     freezing on a stale line offset.
+
+    If `capture` is a list, each new chunk is also appended to it so
+    the caller can post-process (e.g. symbolize) after teardown.
     """
     print("Waiting for console output (usually 30-120s after launch)...",
           flush=True)
@@ -172,9 +177,13 @@ def stream_console(ec2_client, instance_id, poll_interval=5):
                 if not new_chunk.endswith("\n"):
                     sys.stdout.write("\n")
                 sys.stdout.flush()
+                if capture is not None:
+                    capture.append(new_chunk)
             printed = output
 
         time.sleep(poll_interval)
+
+
 
 
 def main():
@@ -184,6 +193,10 @@ def main():
     parser.add_argument("--image", default="build/last/loader.img",
                         help="Path to the source image file to upload (default: build/last/loader.img)")
     parser.add_argument("--attach", action="store_true", help="Stream system log and terminate instance on Ctrl+C")
+    parser.add_argument("-s", "--symbolize", action="store_true",
+                        help="After --attach exits, run any [backtrace] "
+                             "addresses through llvm-symbolizer against "
+                             "loader.elf (next to the source image).")
     args = parser.parse_args()
 
     aws_login()
@@ -348,8 +361,9 @@ def main():
             raise KeyboardInterrupt
         signal.signal(signal.SIGTERM, _sigterm_handler)
 
+        capture = [] if args.symbolize else None
         try:
-            stream_console(ec2_client, instance_id)
+            stream_console(ec2_client, instance_id, capture=capture)
         except KeyboardInterrupt:
             cleanup_aws_resources(
                 ec2_client,
@@ -357,6 +371,10 @@ def main():
                 ami_id=ami_id,
                 snapshot_id=snapshot_id,
             )
+        if capture is not None:
+            symbolize.print_from(''.join(capture), symbolize.elf_next_to(src))
+    elif args.symbolize:
+        print("--symbolize requires --attach; ignoring.", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
