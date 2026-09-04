@@ -162,6 +162,7 @@ _progress_run "$BUILD_DIR-configure.log" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_PROJECT_INCLUDE="$OSV_ROOT/scripts/require-clang.cmake" \
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind" \
         -DLIBCXX_ENABLE_SHARED=OFF \
