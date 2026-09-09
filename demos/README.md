@@ -2,12 +2,8 @@
 
 To select and build one of the applications in this directory, run the following from the MiniOSv root directory:
 ```bash
-# Create the app directory
-mkdir app
-# Copy the demo Makefile into the app directory
-cp demos/Makefile app/
 # Copy the demo application into the app directory
-cp demos/00-hello_world.cc app/
+cp demos/00-hello_world.cc app/app.cc
 # Build the kernel and application
 make -j
 ```
