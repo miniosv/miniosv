@@ -12,6 +12,9 @@
 #include <cpuid.hh>
 #include <processor.hh>
 #include <osv/debug.hh>
+#include <osv/mem/mapping.hh>
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
 
 namespace processor {
 
@@ -21,7 +24,7 @@ static PERCPU(u32, kvm_pv_eoi_word);
 void kvm_pv_eoi_init()
 {
     if (features().kvm_pv_eoi) {
-        wrmsr(msr_kvm_pv_eoi, mmu::virt_to_phys(&*kvm_pv_eoi_word) | 1);
+        wrmsr(msr_kvm_pv_eoi, mem::mapping::to_phys(&*kvm_pv_eoi_word) | 1);
     }
 }
 
@@ -81,7 +84,7 @@ private:
     volatile u32* reg_ptr(apicreg r)
         {return reinterpret_cast<u32*>(&_base_virt[static_cast<unsigned>(r)]);}
 
-    u8* const _base_virt = mmu::phys_cast<u8>(_apic_base);
+    u8 *_base_virt = nullptr;
 
     static constexpr unsigned ICR2_DESTINATION_SHIFT = 24;
     static constexpr unsigned XAPIC_ID_SHIFT = 24;
@@ -102,7 +105,7 @@ void apic_driver::read_base()
 xapic::xapic()
     : apic_driver()
 {
-    mmu::linear_map(static_cast<void*>(_base_virt), _apic_base, 4096, "xapic");
+    _base_virt = static_cast<u8*>(mem::map_phys(_apic_base, 4096, mem::mattr::dev));
     xapic::enable();
 }
 

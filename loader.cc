@@ -24,7 +24,6 @@
 #include <osv/strace.hh>
 #include <osv/power.hh>
 #include <osv/rcu.hh>
-#include <osv/mempool.hh>
 #include <osv/version.h>
 #include <osv/shutdown.hh>
 #include <osv/boot.hh>
@@ -110,9 +109,6 @@ int main()
     sched::init([] { main_cont(); });
 }
 
-#if CONF_memory_tracker
-static bool opt_leak = false;
-#endif
 static bool opt_noshutdown = false;
 bool opt_power_off_on_abort = false;
 #if CONF_tracepoints
@@ -152,12 +148,6 @@ void* do_main_thread(void *_main_args)
     // There is no filesystem: nothing to mount.
     // Networking was removed (Phase 9.2): no interfaces to bring up.
 
-#if CONF_memory_tracker
-    if (opt_leak) {
-        debug("Enabling leak detector.\n");
-        memory::tracker_enabled = true;
-    }
-#endif
 
     boot_time.event("Total time");
 #ifdef __x86_64__
@@ -210,8 +200,6 @@ void main_cont()
     while (end > osv::clock::uptime::now()) {
         // spin
     }
-
-    memory::enable_debug_allocator();
 
     if (sched::cpus.size() > sched::max_cpus) {
         printf("Too many cpus, can't boot with greater than %u cpus.\n", sched::max_cpus);
@@ -272,14 +260,5 @@ void main_cont()
         sched::thread::wait_until([] { return false; });
     }
 
-#if CONF_memory_tracker
-    if (memory::tracker_enabled) {
-        debug("Leak testing done. Please use 'osv leak show' in gdb to analyze results.\n");
-        osv::halt();
-    } else {
-#endif
-        osv::shutdown();
-#if CONF_memory_tracker
-    }
-#endif
+    osv::shutdown();
 }

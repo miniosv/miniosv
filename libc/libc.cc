@@ -6,6 +6,7 @@
  */
 
 #include "libc.hh"
+#include <osv/mem/frames.hh>
 #include <osv/sched.hh>
 #include <stdio.h>
 #include <limits.h>
@@ -22,7 +23,6 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <osv/clock.hh>
-#include <osv/mempool.hh>
 #include <osv/version.h>
 #include <osv/stubbing.hh>
 
@@ -164,8 +164,8 @@ extern "C" int sysinfo(struct sysinfo *info)
     info->uptime = std::chrono::duration_cast<std::chrono::seconds>(
                 osv::clock::uptime::now().time_since_epoch()).count();
     info->loads[0] = info->loads[1] = info->loads[2] = 0; // TODO
-    info->totalram = memory::stats::total();
-    info->freeram = memory::stats::free();
+    info->totalram = mem::frames::total_available_bytes();
+    info->freeram = mem::frames::free_bytes();
     info->sharedram = 0; // TODO: anything more meaningful to return?
     info->bufferram = 0; // TODO: anything more meaningful to return?
     info->totalswap = 0; // Swap not supported in OSv
