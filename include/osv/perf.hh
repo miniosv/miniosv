@@ -71,14 +71,14 @@ struct PMC {
     return *this;
   }
 
-  uint64_t probe() const { return pmc_read(perfCtr); }
+  uint64_t probe() const { return pmc_read(perfCtr, pmClass); }
 
   void start_with_conf(uint64_t value, uint64_t initial = 0) {
-    pmc_write_counter(perfCtr, initial);
-    pmc_start_with_conf(perfCtr, perfEvtSel, value);
+    pmc_write_counter(perfCtr, pmClass, initial);
+    pmc_start_with_conf(perfCtr, perfEvtSel, pmClass, value);
   }
 
-  void stop() { pmc_stop(perfEvtSel); }
+  void stop() { pmc_stop(perfEvtSel, pmClass); }
 };
 
 struct PMCSelect {
@@ -185,7 +185,9 @@ inline std::vector<PMC> make_default_core_pmcs() {
   // Armv8 PMUv3 usually has 6 counters (ids 0-5).
   for (uint32_t i = 0; i < 6; ++i)
     pmcs.emplace_back(i, i, PMClass::CORE);
-  pmcs.emplace_back(1u << 31, 1u << 31, PMClass::CYCLES);
+  // The cycle counter has registers of its own, selected by the class, so its
+  // id is never read -- hence 0 rather than a sentinel that means "not an id".
+  pmcs.emplace_back(0, 0, PMClass::CYCLES);
 #endif
   return pmcs;
 }
@@ -406,14 +408,15 @@ struct PMCSampler {
   bool start() {
     if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))
       return false;
-    ack = pmc_overflow_ack_conf(pmc->perfCtr);
+    ack = pmc_overflow_ack_conf(pmc->perfCtr, pmc->pmClass);
     vector = pmc_attach_overflow_handler([this] {
-      pmc_write_counter(pmc->perfCtr, pmc_period_value(pmc->perfCtr, period));
+      pmc_write_counter(pmc->perfCtr, pmc->pmClass,
+                        pmc_period_value(pmc->perfCtr, pmc->pmClass, period));
       pmc_ack_overflow(ack, vector);
       handler(current_interrupt_frame);
     });
     pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
-                         pmc_period_value(pmc->perfCtr, period));
+                         pmc_period_value(pmc->perfCtr, pmc->pmClass, period));
     return true;
   }
 

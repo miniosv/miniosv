@@ -72,25 +72,32 @@ inline void enable_pmu() {
   processor::wrmsr(intel_msr_perf_global_ctrl, mask);
 }
 
-inline void pmc_stop(uint32_t evt_sel) { processor::wrmsr(evt_sel, 0); }
+// PMClass is taken and ignored throughout: x86 exposes no separate cycle
+// register, so every PMC here is a general-purpose counter. The parameter
+// exists so callers need no #ifdef.
+inline void pmc_stop(uint32_t evt_sel, PMClass) {
+  processor::wrmsr(evt_sel, 0);
+}
 
-inline void pmc_write_counter(uint32_t ctr, uint64_t value) {
+inline void pmc_write_counter(uint32_t ctr, PMClass, uint64_t value) {
   processor::wrmsr(ctr, value);
 }
 
-inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
+inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel, PMClass,
                                 uint64_t value) {
   processor::wrmsr(evt_sel, value);
 }
 
-inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
+inline uint64_t pmc_read(uint32_t ctr, PMClass) {
+  return processor::rdmsr(ctr);
+}
 
 inline constexpr uint64_t pmc_int_enable = 1ull << 20;
 
 using PMCIntHandle = unsigned;
 
 // Fixed in hardware; no x86 bit widens it. AMD core PMCs are 48 bits.
-inline uint32_t pmc_overflow_width(uint32_t = 0) {
+inline uint32_t pmc_overflow_width(uint32_t = 0, PMClass = PMClass::CORE) {
   if (is_intel()) {
     uint32_t width = (processor::cpuid(0x0A).a >> 16) & 0xFFu;
     if (width)
@@ -104,7 +111,7 @@ inline uint64_t pmc_counter_mask(uint32_t ctr = 0) {
   return width >= 64 ? ~0ull : ((1ull << width) - 1);
 }
 
-inline uint64_t pmc_period_value(uint32_t ctr, uint64_t period) {
+inline uint64_t pmc_period_value(uint32_t ctr, PMClass, uint64_t period) {
   return -period & pmc_counter_mask(ctr);
 }
 inline constexpr uint32_t amd_msr_perf_cntr_global_status_clr = 0xC0000302u;
@@ -116,7 +123,7 @@ struct PMCOverflowAck {
   uint64_t mask;
 };
 
-inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
+inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t, PMClass) {
   if (is_intel())
     return {intel_msr_perf_global_ovf_ctrl, (1ull << pmu_num_counters()) - 1};
   processor::cpuid_result ext_max = processor::cpuid(0x80000000);

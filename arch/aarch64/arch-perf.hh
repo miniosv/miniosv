@@ -115,12 +115,28 @@ inline void enable_pmu() {
   }
 }
 
-inline void pmc_stop(uint32_t counter_mask) {
-  asm volatile("msr pmcntenclr_el0, %0" : : "r"((uint64_t)counter_mask));
+// Which registers a counter uses comes from its class, never from its id: the
+// cycle counter is PMCCNTR_EL0 and occupies bit 31 of the enable and overflow
+// registers, while event counters index PMEVCNTR<n>_EL0 and occupy 0..30. The
+// id of a PMClass::CYCLES counter is therefore never read.
+inline constexpr unsigned pmccntr_bit = 31;
+
+inline uint64_t pmc_bit(uint32_t counter, PMClass cls) {
+  return 1ull << (cls == PMClass::CYCLES ? pmccntr_bit : counter);
+}
+
+// Takes a counter id, not a mask: every caller passes an id, and read as a
+// mask id 0 cleared nothing while id 1 cleared counter 0.
+inline void pmc_stop(uint32_t counter, PMClass cls) {
+  asm volatile("msr pmcntenclr_el0, %0" : : "r"(pmc_bit(counter, cls)));
   asm volatile("isb" ::: "memory");
 }
 
-inline void pmc_write_counter(uint32_t counter, uint64_t value) {
+inline void pmc_write_counter(uint32_t counter, PMClass cls, uint64_t value) {
+  if (cls == PMClass::CYCLES) {
+    asm volatile("msr pmccntr_el0, %0" : : "r"(value));
+    return;
+  }
   switch (counter) {
     // clang-format off
   case 0: asm volatile("msr pmevcntr0_el0, %0" : : "r"(value)); break;
@@ -129,13 +145,18 @@ inline void pmc_write_counter(uint32_t counter, uint64_t value) {
   case 3: asm volatile("msr pmevcntr3_el0, %0" : : "r"(value)); break;
   case 4: asm volatile("msr pmevcntr4_el0, %0" : : "r"(value)); break;
   case 5: asm volatile("msr pmevcntr5_el0, %0" : : "r"(value)); break;
-  case (1u << 31): asm volatile("msr pmccntr_el0, %0" : : "r"(value)); break;
     // clang-format on
   }
 }
 
-inline void pmc_start_with_conf(uint32_t counter, uint32_t evt_sel,
+inline void pmc_start_with_conf(uint32_t counter, uint32_t evt_sel, PMClass cls,
                                 uint64_t value) {
+  // The cycle counter takes no event select -- it counts one thing.
+  if (cls == PMClass::CYCLES) {
+    asm volatile("msr pmcntenset_el0, %0\n\tisb" ::"r"(pmc_bit(counter, cls))
+                 : "memory");
+    return;
+  }
   if (!is_event_supported(value))
     return;
 
@@ -149,19 +170,18 @@ inline void pmc_start_with_conf(uint32_t counter, uint32_t evt_sel,
   case 4: asm volatile("msr pmevtyper4_el0, %0" : : "r"(value)); break;
   case 5: asm volatile("msr pmevtyper5_el0, %0" : : "r"(value)); break;
     // clang-format on
-  case (1u << 31):
-    asm volatile("msr pmcntenset_el0, %0\n\t"
-                 "isb" ::"r"((uint64_t)(1u << 31))
-                 : "memory");
-    return;
   }
   asm volatile("isb" ::: "memory");
   asm volatile("msr pmcntenset_el0, %0" : : "r"(1ull << counter));
   asm volatile("isb" ::: "memory");
 }
 
-inline uint64_t pmc_read(uint32_t counter) {
+inline uint64_t pmc_read(uint32_t counter, PMClass cls) {
   uint64_t value;
+  if (cls == PMClass::CYCLES) {
+    asm volatile("mrs %0, pmccntr_el0" : "=r"(value));
+    return value;
+  }
   switch (counter) {
     // clang-format off
   case 0: asm volatile("mrs %0, pmevcntr0_el0" : "=r"(value)); break;
@@ -170,7 +190,6 @@ inline uint64_t pmc_read(uint32_t counter) {
   case 3: asm volatile("mrs %0, pmevcntr3_el0" : "=r"(value)); break;
   case 4: asm volatile("mrs %0, pmevcntr4_el0" : "=r"(value)); break;
   case 5: asm volatile("mrs %0, pmevcntr5_el0" : "=r"(value)); break;
-  case (1u << 31): asm volatile("mrs %0, pmccntr_el0" : "=r"(value)); break;
     // clang-format on
   }
   return value;
@@ -185,12 +204,12 @@ struct PMCOverflowAck {
   uint64_t mask;
 };
 
-inline uint64_t pmc_overflow_bit(uint32_t counter) {
-  return counter == (1u << 31) ? (1ull << 31) : (1ull << counter);
+inline uint64_t pmc_overflow_bit(uint32_t counter, PMClass cls) {
+  return pmc_bit(counter, cls);
 }
 
-inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t counter) {
-  uint64_t bit = pmc_overflow_bit(counter);
+inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t counter, PMClass cls) {
+  uint64_t bit = pmc_overflow_bit(counter, cls);
   asm volatile("msr pmintenset_el1, %0\n\tisb" ::"r"(bit) : "memory");
   return {bit};
 }
@@ -201,13 +220,14 @@ inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle) {
 
 // Where overflow is recorded, not the register size: PMCCNTR_EL0 counts 64-bit
 // whatever LC says, only PMEVCNTR<n>_EL0 is 32-bit when LP is clear.
-inline uint32_t pmc_overflow_width(uint32_t counter) {
-  uint64_t bit = counter == (1u << 31) ? pmcr_lc : pmcr_lp;
+inline uint32_t pmc_overflow_width(uint32_t counter, PMClass cls) {
+  uint64_t bit = cls == PMClass::CYCLES ? pmcr_lc : pmcr_lp;
   return (pmcr_read() & bit) ? 64 : 32;
 }
 
-inline uint64_t pmc_period_value(uint32_t counter, uint64_t period) {
-  uint32_t width = pmc_overflow_width(counter);
+inline uint64_t pmc_period_value(uint32_t counter, PMClass cls,
+                                 uint64_t period) {
+  uint32_t width = pmc_overflow_width(counter, cls);
   return width >= 64 ? -period : (-period & ((1ull << width) - 1));
 }
 
