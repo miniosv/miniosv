@@ -394,14 +394,14 @@ public:
   }
 };
 
-struct PMCSampler {
-  PMCSampler(uint64_t period, std::function<void(exception_frame *)> handler,
-             PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
+struct PerfSampler {
+  PerfSampler(uint64_t period, std::function<void(exception_frame *)> handler,
+              PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
       : period(period), handler(std::move(handler)), pmce(pmce) {
     enable_pmu();
   }
 
-  ~PMCSampler() { stop(); }
+  ~PerfSampler() { stop(); }
 
   bool start() {
     if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))
