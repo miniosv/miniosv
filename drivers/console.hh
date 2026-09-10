@@ -8,9 +8,14 @@
 #ifndef DRIVERS_CONSOLE_HH
 #define DRIVERS_CONSOLE_HH
 
+#include <termios.h>
+
 #include "console-driver.hh"
 
 namespace console {
+
+// The terminal settings of the console, for the termios calls.
+extern ::termios tio;
 
 void write(const char *msg, size_t len);
 void write_ll(const char *msg, size_t len);

@@ -6,6 +6,7 @@
  */
 
 #include "libc.hh"
+#include "drivers/console.hh"
 #include <osv/sched.hh>
 #include <stdio.h>
 #include <limits.h>
@@ -20,7 +21,6 @@
 #include <sched.h>
 #include <termios.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 #include <osv/clock.hh>
 #include <osv/mempool.hh>
 #include <osv/version.h>
@@ -176,42 +176,59 @@ extern "C" int sysinfo(struct sysinfo *info)
     return 0;
 }
 
-int tcgetattr(int fd, termios *p)
+// The terminal calls talk to the console directly.
+// Only the standard streams are terminals here; there is no fd table and
+// nothing else to be a tty.
+static bool is_std_fd(int fd)
 {
-    return ioctl(fd, TCGETS, p);
+    return fd >= 0 && fd <= 2;
 }
 
+int tcgetattr(int fd, termios *p)
+{
+    if (!is_std_fd(fd)) {
+        errno = ENOTTY;
+        return -1;
+    }
+    if (!p) {
+        errno = EFAULT;
+        return -1;
+    }
+    *p = console::tio;
+    return 0;
+}
+
+// The console is always ready to accept output, and has no output queue to drain.
 int tcsetattr(int fd, int action, const termios *p)
 {
+    if (!is_std_fd(fd)) {
+        errno = ENOTTY;
+        return -1;
+    }
     switch (action) {
     case TCSANOW:
-        break;
     case TCSADRAIN:
-        tcdrain(fd);
-        break;
     case TCSAFLUSH:
-        tcdrain(fd);
-        tcflush(fd,TCIFLUSH);
         break;
     default:
         errno = EINVAL;
         return -1;
     }
-    return ioctl(fd, TCSETS, p);
+    // Just accept the new settings: the console is always ready to accept output,
+    // and has no output queue to drain.
+    return 0;
 }
 
 int tcdrain(int fd)
 {
-    // The archaic TCSBRK is customary on Linux for draining output.
-    // BSD would have used TIOCDRAIN.
-    return ioctl(fd, TCSBRK, 1);
+    // Output is written straight through to the device; nothing is queued.
+    return is_std_fd(fd) ? 0 : (errno = ENOTTY, -1);
 }
 
 int tcflush(int fd, int what)
 {
-    // Linux uses TCFLSH. BSD would have used TIOCFLUSH (and different
-    // argument).
-    return ioctl(fd, TCFLSH, what);
+    // Nothing is buffered in either direction, so there is nothing to discard.
+    return is_std_fd(fd) ? 0 : (errno = ENOTTY, -1);
 }
 
 speed_t cfgetospeed(const termios *p)
@@ -252,7 +269,8 @@ int cfsetspeed(struct termios *tio, speed_t speed)
 
 int tcsendbreak(int fd, int dur)
 {
-	return ioctl(fd, TCSBRK, 0);
+    // A break condition has no meaning for the console.
+    return is_std_fd(fd) ? 0 : (errno = ENOTTY, -1);
 }
 
 void cfmakeraw(struct termios *t)
