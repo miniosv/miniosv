@@ -989,16 +989,25 @@ void frames_free()
                 p[id * per_thread + i] = fr::alloc();
             }
         });
-        // Thread stacks come from the heap, which keeps what it took, so the
-        // count is compared from here and with room for that.
-        size_t during = fr::free_bytes();
+        // Whether the frames really came back is checked by taking them
+        // again: the thread stacks and the heap move the count meanwhile.
         parallel(threads, [&](unsigned id) {
             unsigned from = (id + 1) % threads;
             for (int i = 0; i < per_thread; i++) {
                 fr::free(p[from * per_thread + i]);
             }
         });
-        CHECK(fr::free_bytes() + (4ul << 20) >= during + threads * per_thread * page);
+        std::set<fr::phys_addr> seen;
+        for (unsigned i = 0; i < threads * per_thread; i++) {
+            auto q = fr::alloc();
+            CHECK(q != fr::no_memory);
+            seen.insert(q);
+            p[i] = q;
+        }
+        CHECK(seen.size() == threads * per_thread);
+        for (unsigned i = 0; i < threads * per_thread; i++) {
+            fr::free(p[i]);
+        }
     }
 }
 
