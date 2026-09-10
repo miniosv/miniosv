@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iostream>
 
 #include "apic.hh"
 #include "exceptions.hh"
@@ -78,9 +79,10 @@ inline void pmc_write_counter(uint32_t ctr, uint64_t value) {
   processor::wrmsr(ctr, value);
 }
 
-inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
+inline bool pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
                                 uint64_t value) {
   processor::wrmsr(evt_sel, value);
+  return true;
 }
 
 inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
@@ -115,6 +117,10 @@ struct PMCOverflowAck {
   uint32_t msr;
   uint64_t mask;
 };
+
+inline uint64_t pmu_overflow_status() { return 0; }
+inline uint64_t pmc_overflow_bit(uint32_t) { return 0; }
+inline void pmc_ack_overflow_mask(uint64_t, PMCIntHandle) {}
 
 inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
   if (is_intel())
@@ -226,5 +232,12 @@ inline const PMCEvent LL_CACHE_MISS     = is_intel() ? INTEL::LL_CACHE_MISS    :
 // AMD this alias reports L1D accesses instead (matches pre-existing behaviour).
 inline const PMCEvent LL_CACHE          = is_intel() ? INTEL::LL_CACHE         : AMD::L1D_ACCESSES;
 } // namespace PERF_COUNT_HW
+
+// x86 has no PMCEID equivalent: the catalogue is per-vendor and validated by
+// construction, so there is nothing to enumerate.
+inline void pmu_dump_state() {
+  std::cout << "PMU: vendor=" << (is_intel() ? "intel" : is_amd() ? "amd" : "?")
+            << " counters=" << pmu_num_counters() << std::endl;
+}
 
 } // namespace perf
