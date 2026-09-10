@@ -15,6 +15,7 @@
 #include "processor.hh"
 #include "psci.hh"
 #include "drivers/acpi.hh"
+#include <osv/mem/mapping.hh>
 
 extern "C" { /* see boot.S */
     extern init_stack *smp_stack_free;
@@ -99,7 +100,7 @@ void smp_launch()
         c->init_idle_thread();
         c->bringup_thread = new sched::thread([=] { secondary_bringup(c); }, attr, true);
         psci::_psci.cpu_on(c->arch.mpid,
-                mmu::virt_to_phys(reinterpret_cast<void *>(start_secondary_cpu)));
+                mem::mapping::to_phys(reinterpret_cast<void *>(start_secondary_cpu)));
     }
     while (smp_processors != sched::cpus.size())
         barrier();

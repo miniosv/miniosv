@@ -24,6 +24,8 @@ int os_libc_main();
 int os_stress_main();
 int os_iostream_main();
 int os_memmove_main();
+int os_memory_main();
+int os_memory_primitives_main();
 
 extern "C" void osv_app_main()
 {
@@ -37,6 +39,10 @@ extern "C" void osv_app_main()
     rc |= os_iostream_main();
     printf("\n");
     rc |= os_memmove_main();
+    printf("\n");
+    rc |= os_memory_main();
+    printf("\n");
+    rc |= os_memory_primitives_main();
     printf("\n");
     rc |= os_stress_main();
 

@@ -6,9 +6,11 @@
  */
 
 #include <sys/mman.h>
+#include <osv/align.hh>
+#include <osv/mem/mapping.hh>
+#include <osv/mem/vspace.hh>
 #include <memory>
-#include <osv/mmu.hh>
-#include <osv/mempool.hh>
+#include <new>
 #include <osv/debug.hh>
 #include "osv/trace.hh"
 #include <osv/stubbing.hh>
@@ -28,68 +30,87 @@ TRACEPOINT(trace_memory_munmap, "addr=%p, length=%d", void *, size_t);
 TRACEPOINT(trace_memory_munmap_err, "%d", int);
 TRACEPOINT(trace_memory_munmap_ret, "");
 
-unsigned libc_flags_to_mmap(int flags)
-{
-    unsigned mmap_flags = 0;
-    if (flags & MAP_FIXED) {
-        mmap_flags |= mmu::mmap_fixed;
-    }
-    if (flags & MAP_POPULATE) {
-        mmap_flags |= mmu::mmap_populate;
-    }
-    if (flags & MAP_STACK) {
-        mmap_flags |= mmu::mmap_stack;
-    }
-    if (flags & MAP_SHARED) {
-        mmap_flags |= mmu::mmap_shared;
-    }
-    if (flags & MAP_UNINITIALIZED) {
-        mmap_flags |= mmu::mmap_uninitialized;
-    }
-    return mmap_flags;
-}
-
 unsigned libc_prot_to_perm(int prot)
 {
     unsigned perm = 0;
     if (prot & PROT_READ) {
-        perm |= mmu::perm_read;
+        perm |= mem::perm_read;
     }
     if (prot & PROT_WRITE) {
-        perm |= mmu::perm_write;
+        perm |= mem::perm_write;
     }
     if (prot & PROT_EXEC) {
-        perm |= mmu::perm_exec;
+        perm |= mem::perm_exec;
     }
     return perm;
 }
 
-unsigned libc_madvise_to_advise(int advice)
+static bool page_aligned(const void *p)
 {
-    if (advice == MADV_DONTNEED) {
-        return mmu::advise_dontneed;
-    } else if (advice == MADV_NOHUGEPAGE) {
-        return mmu::advise_nohugepage;
+    return !(reinterpret_cast<uintptr_t>(p) & (mem::mapping::page_size - 1));
+}
+
+// Anonymous memory: a reservation of its own, mapped eagerly. The ops mark
+// tells these apart from every other reservation.
+static const mem::vspace::region_ops anon_ops = { .fault = nullptr };
+
+static mem::vspace::region *anon_at(const void *addr)
+{
+    auto *r = mem::vspace::lookup(reinterpret_cast<uintptr_t>(addr));
+    return r && r->ops == &anon_ops ? r : nullptr;
+}
+
+static void *anon_map(size_t length, unsigned perm)
+{
+    // Huge leaves once there is enough to fill one.
+    size_t leaf = length >= mem::mapping::huge_page_size ?
+                  mem::mapping::huge_page_size : mem::mapping::page_size;
+    auto *r = new (std::nothrow) mem::vspace::region();
+    if (!r) {
+        return nullptr;
     }
-    return 0;
+    r->perm = perm;
+    r->ops = &anon_ops;
+    if (mem::vspace::reserve(*r, align_up(length, leaf), leaf) !=
+        mem::vspace::resa_result::success) {
+        delete r;
+        return nullptr;
+    }
+    if (!mem::mapping::populate(r->span, perm, leaf)) {
+        mem::mapping::depopulate(r->span);
+        mem::vspace::release(*r);
+        delete r;
+        return nullptr;
+    }
+    return reinterpret_cast<void *>(r->span.start);
+}
+
+// depopulate invalidates before the frames go back, so the addresses this is
+// giving up cannot be reached through a stale translation.
+static void anon_unmap(mem::vspace::region *r)
+{
+    mem::mapping::depopulate(r->span);
+    mem::vspace::release(*r);
+    delete r;
 }
 
 OSV_LIBC_API
 int mprotect(void *addr, size_t len, int prot)
 {
-    // we don't support mprotecting() the linear map (e.g.., malloc() memory)
-    // because that could leave the linear map a mess.
-    if (reinterpret_cast<long>(addr) < 0) {
-        abort("mprotect() on linear map not supported\n");
-    }
-
-    if (!mmu::is_page_aligned(addr)) {
-        // address not page aligned
+    if (!page_aligned(addr)) {
         return libc_error(EINVAL);
     }
 
-    len = align_up(len, mmu::page_size);
-    return mmu::mprotect(addr, len, libc_prot_to_perm(prot)).to_libc();
+    // Only a mapping this made can be reprotected: anything else shares its
+    // pages with the allocation next to it.
+    len = align_up(len, mem::mapping::page_size);
+    uintptr_t start = reinterpret_cast<uintptr_t>(addr);
+    auto *r = anon_at(addr);
+    if (!r || !r->span.contains({start, start + len})) {
+        return libc_error(ENOMEM);
+    }
+    mem::mapping::protect({start, start + len}, libc_prot_to_perm(prot));
+    return 0;
 }
 
 int mmap_validate(void *addr, size_t length, int flags, off_t offset)
@@ -99,8 +120,8 @@ int mmap_validate(void *addr, size_t length, int flags, off_t offset)
     if (!type || type == (MAP_SHARED|MAP_PRIVATE)) {
         return EINVAL;
     }
-    if ((flags & MAP_FIXED && !mmu::is_page_aligned(addr)) ||
-        !mmu::is_page_aligned(offset) || length == 0) {
+    if ((flags & MAP_FIXED && !page_aligned(addr)) ||
+        !page_aligned(reinterpret_cast<void *>(offset)) || length == 0) {
         return EINVAL;
     }
     return 0;
@@ -119,23 +140,10 @@ void *mmap(void *addr, size_t length, int prot, int flags,
         return MAP_FAILED;
     }
 
-    // make use the payload isn't remapping physical memory
-    assert(reinterpret_cast<long>(addr) >= 0);
-
     void *ret;
 
-    auto mmap_flags = libc_flags_to_mmap(flags);
-    auto mmap_perm  = libc_prot_to_perm(prot);
+    auto mmap_perm = libc_prot_to_perm(prot);
 
-#ifndef AARCH64_PORT_STUB
-    if ((flags & MAP_32BIT) && !(flags & MAP_FIXED) && !addr) {
-        // If addr is not specified, OSv by default starts mappings at address
-        // 0x200000000000ul (see mmu::allocate()).  MAP_32BIT asks for a lower
-        // default. If MAP_FIXED or addr were specified, the default does not
-        // matter anyway.
-        addr = (void*)0x2000000ul;
-    }
-#endif
     // There is no filesystem, so only anonymous mappings are supported;
     // file-backed mmap is not available.
     if (!(flags & MAP_ANONYMOUS)) {
@@ -143,14 +151,18 @@ void *mmap(void *addr, size_t length, int prot, int flags,
         trace_memory_mmap_err(errno);
         return MAP_FAILED;
     }
-    {
-        try {
-            ret = mmu::map_anon(addr, length, mmap_flags, mmap_perm);
-        } catch (error& err) {
-            err.to_libc(); // sets errno
-            trace_memory_mmap_err(errno);
-            return MAP_FAILED;
-        }
+    // MAP_FIXED has no answer here, since the address space manager picks
+    // addresses.
+    if (flags & MAP_FIXED) {
+        errno = ENOTSUP;
+        trace_memory_mmap_err(errno);
+        return MAP_FAILED;
+    }
+    ret = anon_map(length, mmap_perm);
+    if (!ret) {
+        errno = ENOMEM;
+        trace_memory_mmap_err(errno);
+        return MAP_FAILED;
     }
     trace_memory_mmap_ret(ret);
     return ret;
@@ -158,7 +170,7 @@ void *mmap(void *addr, size_t length, int prot, int flags,
 
 int munmap_validate(void *addr, size_t length)
 {
-    if (!mmu::is_page_aligned(addr) || length == 0) {
+    if (!page_aligned(addr) || length == 0) {
         return EINVAL;
     }
     return 0;
@@ -174,156 +186,61 @@ int munmap(void *addr, size_t length)
         trace_memory_munmap_err(error);
         return -1;
     }
-    int ret = mmu::munmap(addr, length).to_libc();
-    if (ret == -1) {
+    int ret = 0;
+    // A mapping is given back whole, at the address mmap() returned.
+    auto *r = anon_at(addr);
+    if (r && r->span.start == reinterpret_cast<uintptr_t>(addr)) {
+        anon_unmap(r);
+    } else {
+        errno = EINVAL;
+        ret = -1;
         trace_memory_munmap_err(errno);
     }
     trace_memory_munmap_ret();
     return ret;
 }
 
+// Anonymous memory has no backing store, so this only reports whether the
+// range is there at all.
 OSV_LIBC_API
 int msync(void *addr, size_t length, int flags)
 {
-    return mmu::msync(addr, length, flags).to_libc();
-}
-
-OSV_LIBC_API
-int mincore(void *addr, size_t length, unsigned char *vec)
-{
-    if (!mmu::is_page_aligned(addr)) {
-        return libc_error(EINVAL);
-    }
-
-    return mmu::mincore(addr, length, vec).to_libc();
-}
-
-OSV_LIBC_API
-int madvise(void *addr, size_t length, int advice)
-{
-    auto err = mmu::advise(addr, length, libc_madvise_to_advise(advice));
-    return err.to_libc();
-}
-
-// The brk/sbrk/program break implementation is quite simple
-// and is based on mmap().
-// In essence, on the very 1st call to brk() or sbr(), we call
-// initialize_program_break() to initialize anonymous unpopulated
-// private virtual memory mapping. The mapping size is roughly
-// equal to the amount of free physical memory available at this
-// point rounded down to the nearest huge page. This should be
-// more than enough to satisfy growth of the program break upward.
-// Given the mapping is unpopulated, we do not really use any physical
-// memory until the program break moves up and access to corresponding
-// pages triggers a fault. We also try to give the physical memory back
-// to the system in rare cases when program break move back down.
-//
-// Given the mapping is rounded to the whole huge page, the underlying
-// physical memory will grow in 2M chunks which seems like a good compromise
-// given program break will not be used for large memory allocations.
-// In future we may decide to make the mapping mapped in small 4K pages
-// and grow accordingly to better save physical memory. This would however
-// be more costly at page mapping tables level.
-//
-// Please note that neither the program break nor brk/sbrk are thread-safe
-// by design and the use of it needs to use proper locking around it.
-static void *initial_program_break = NULL;
-// We use atomic to make sure the program break changes are visible consistently
-// across all CPUs regardless of the weak or strong memory model
-static std::atomic<void*> program_break = {NULL};
-static size_t break_area_size = 0;
-
-static bool initialize_program_break()
-{
-    if (!program_break) {
-        break_area_size = align_down(memory::stats::free(), mmu::huge_page_size);
-        program_break = initial_program_break = mmap(NULL, break_area_size, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-        return initial_program_break != MAP_FAILED;
-    } else {
-        return true;
-    }
-}
-
-void *get_program_break()
-{
-    return program_break.load();
-}
-
-static int internal_brk(void *addr)
-{
-    if (addr) {
-        // Check if new program break falls into a mapped area of memory
-        if (addr >= initial_program_break && addr < static_cast<char*>(initial_program_break) + break_area_size) {
-            if (addr < program_break.load()) {
-                // The rare case when the program break goes down. In this case
-                // let us identify potential whole huge pages of the mapping we
-                // can depopulate and return physical memory to the system
-                void *depopulate_start = align_up(addr, mmu::huge_page_size);
-                void *depopulate_end = align_up(program_break.load(), mmu::huge_page_size);
-                if (depopulate_start < depopulate_end) {
-                    size_t depopulate_size = reinterpret_cast<uintptr_t>(depopulate_end) - reinterpret_cast<uintptr_t>(depopulate_start);
-                    mmu::advise(depopulate_start, depopulate_size, mmu::advise_dontneed);
-                }
-            } else {
-                // The program break moves up. In this case let us identify the new memory area
-                // and initialize it to zero per the specification
-                size_t new_memory_area = reinterpret_cast<uintptr_t>(addr) - reinterpret_cast<uintptr_t>(program_break.load());
-                memset(program_break.load(), 0, new_memory_area);
-            }
-            program_break = addr;
-            return 0;
-        } else {
-            // Invalid program break address
-            errno = ENOMEM;
-            return -1;
-        }
-    } else {
-        return 0;
-    }
-}
-
-OSV_LIBC_API
-int brk(void *addr)
-{
-    if (!initialize_program_break()) {
+    if (!anon_at(addr)) {
         errno = ENOMEM;
         return -1;
-    }
-    return internal_brk(addr);
-}
-
-OSV_LIBC_API
-void *sbrk(intptr_t increment)
-{
-    if (!initialize_program_break()) {
-        errno = ENOMEM;
-        return (void *)-1;
-    }
-    if (!increment) {
-        // If 0 return current program break
-        return program_break.load();
-    } else {
-        // Otherwise increment or decrement the break by
-        // delegating to internal_brk()
-        auto old_break = program_break.load();
-        if (!internal_brk(static_cast<char*>(old_break) + increment)) {
-            return old_break;
-        } else {
-            return (void *)-1;
-        }
-    }
-}
-
-static unsigned posix_madvise_to_advise(int advice)
-{
-    if (advice == POSIX_MADV_DONTNEED) {
-        return mmu::advise_dontneed;
     }
     return 0;
 }
 
+// Nothing is given back: the frames under a mapping belong to it until it is
+// unmapped. MADV_DONTNEED is accepted and does nothing.
+OSV_LIBC_API
+int madvise(void *addr, size_t length, int advice)
+{
+    if (!anon_at(addr)) {
+        errno = ENOMEM;
+        return -1;
+    }
+    return 0;
+}
+
+// brk/sbrk are not supported: nothing asks for them, and a program break wants
+// a lazily backed region, which anonymous memory here is not.
+OSV_LIBC_API
+int brk(void *)
+{
+    errno = ENOMEM;
+    return -1;
+}
+
+OSV_LIBC_API
+void *sbrk(intptr_t)
+{
+    errno = ENOMEM;
+    return (void *)-1;
+}
+
 OSV_LIBC_API
 int posix_madvise(void *addr, size_t len, int advice) {
-    auto err = mmu::advise(addr, len, posix_madvise_to_advise(advice));
-    return err.get();
+    return anon_at(addr) ? 0 : ENOMEM;
 }
