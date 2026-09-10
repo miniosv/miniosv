@@ -90,7 +90,7 @@ else
 $(error unsupported architecture $(arch))
 endif
 
-CROSS_PREFIX ?= $(if $(filter-out $(arch),$(host_arch)),$(ARCH_STR)-linux-gnu-)
+CROSS_PREFIX ?= $(if $(filter-out $(arch),$(host_arch)),$(arch)-linux-gnu-)
 # Pure-LLVM toolchain: one clang/clang++ that cross-compiles by target triple
 # (no per-arch GNU gcc). When building for a non-host arch, point clang at the
 # target with --target=<triple> derived from CROSS_PREFIX (strip trailing '-').
@@ -402,6 +402,11 @@ makedir = $(call very-quiet, mkdir -p $(dir $@))
 $(out)/%.o: %.cc | generated-headers $(out)/.libcxx-built
 	$(makedir)
 	$(call quiet, $(CXX) $(CXXFLAGS) -c -o $@ $<, CXX $*.cc)
+
+# The kernel itself uses .cc throughout; .cpp is here for the applications
+$(out)/%.o: %.cpp | generated-headers $(out)/.libcxx-built
+	$(makedir)
+	$(call quiet, $(CXX) $(CXXFLAGS) -c -o $@ $<, CXX $*.cpp)
 
 $(out)/%.o: %.c | generated-headers
 	$(makedir)
@@ -863,10 +868,22 @@ def_symbols = --defsym=OSV_KERNEL_BASE=$(kernel_base) \
               --defsym=OSV_KERNEL_VM_SHIFT=$(kernel_vm_shift)
 endif
 
+# The objects go to the linker through a response file, one per line: a large
+# application overflows the argument list.
+empty :=
+space := $(empty) $(empty)
+define newline
+
+
+endef
+link-inputs = $(patsubst %.ld,-T %.ld,$(filter-out $(app_mode_dep) $(app_init_late) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep),$^))
+
 $(out)/loader.elf: $(stage1_targets) arch/$(arch)/loader.ld $(app_mode_dep) $(app_init_late) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep)
+	$(call very-quiet, $(makedir))
+	$(file > $@.objects,$(subst $(space),$(newline),$(link-inputs)))
 	$(call quiet, $(LD) -o $@ $(def_symbols) \
 		-static --eh-frame-hdr -L$(out)/arch/$(arch) -L$(out) \
-            $(patsubst %.ld,-T %.ld,$(filter-out $(app_mode_dep) $(app_init_late) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep),$^)) \
+	    @$@.objects \
 	    $(linker_archives_options) $(conf_linker_extra_options), \
 		LINK loader.elf)
 
