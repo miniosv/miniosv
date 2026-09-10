@@ -154,7 +154,7 @@ OSV_LIBC_API int chmod(const char *, mode_t) { errno = ENOENT; return -1; }
 OSV_LIBC_API int fchmod(int, mode_t) { errno = EBADF; return -1; }
 OSV_LIBC_API int fchmodat(int, const char *, mode_t, int) { errno = ENOENT; return -1; }
 OSV_LIBC_API int fcntl(int, int, ...) { errno = EBADF; return -1; }
-OSV_LIBC_API int ioctl(int, unsigned long, ...) { errno = ENOTTY; return -1; }
+// No ioctl(): what an application needs from the kernel it calls directly.
 OSV_LIBC_API int flock(int, int) { errno = EBADF; return -1; }
 OSV_LIBC_API int ftruncate(int, off_t) { errno = EBADF; return -1; }
 OSV_LIBC_API int truncate(const char *, off_t) { errno = ENOENT; return -1; }
