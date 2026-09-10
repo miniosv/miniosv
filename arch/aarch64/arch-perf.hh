@@ -32,6 +32,25 @@ inline uint32_t midr_read() {
 
 inline bool is_midr(uint32_t to_check) { return midr_read() == to_check; }
 
+// Identifies the cpu design. An asymmetric SoC (Cortex-A76 + A55) gives its
+// clusters different counter counts and different event support, so anything
+// cached per-PMU has to be keyed on this rather than probed once on the boot
+// cpu.
+inline uint32_t pmu_design_id() { return midr_read(); }
+
+inline const char *midr_core_name(uint32_t midr) {
+  switch (midr) {
+  case midr_neoverse_v1:
+    return "neoverse-v1";
+  case midr_cortex_a76:
+    return "cortex-a76";
+  case midr_cortex_a55:
+    return "cortex-a55";
+  default:
+    return "unknown";
+  }
+}
+
 // SMCCC vendor hypervisor UID (function 0x8600FF01); KVM's UUID comes from
 // Linux arch/arm64/kvm/hypercalls.c.
 inline bool is_kvm_guest() {
@@ -111,7 +130,14 @@ inline uint64_t pmcr_read() {
   return pmcr;
 }
 
+// Defined below; enable_pmu() probes the counter width while no counter has
+// been reserved yet, because the probe writes PMEVCNTR0.
+inline uint32_t pmu_probe_event_counter_width();
+
 inline void enable_pmu() {
+  // Clear all counter enables, interrupt enables and overflow flags: they are
+  // unknown at reset, and a stale flag whose interrupt is still enabled keeps
+  // the level-triggered PMU interrupt asserted forever.
   asm volatile("msr pmcntenclr_el0, %0\n\t"
                "msr pmintenclr_el1, %0\n\t"
                "msr pmovsclr_el0, %0\n\t"
@@ -130,6 +156,11 @@ inline void enable_pmu() {
                  "wide and wrap after 2^32 events."
               << std::endl;
   }
+
+  // Probe here, while no counter has been handed out: the probe writes
+  // PMEVCNTR0, and doing it lazily from Event::start() would corrupt a
+  // measurement that is already running on counter 0.
+  (void)pmu_probe_event_counter_width();
 }
 
 inline void pmc_stop(uint32_t counter) {
@@ -249,6 +280,25 @@ inline uint64_t pmu_overflow_status() {
   return v;
 }
 
+// Drop a pending overflow without touching the interrupt enables. Used before
+// a handler is attached, so a flag left by the counter's previous owner cannot
+// fire it immediately.
+inline void pmc_clear_overflow(PMCOverflowAck ack) {
+  asm volatile("msr pmovsclr_el0, %0\n\tisb" ::"r"(ack.mask) : "memory");
+}
+
+// The PMU interrupt is one PPI shared by every handler on the cpu, so a
+// handler has to ask whether the overflow was its own.
+inline bool pmc_overflow_pending(PMCOverflowAck ack) {
+  return (pmu_overflow_status() & ack.mask) != 0;
+}
+
+// Stop taking overflow interrupts for the counters named by `mask`, leaving
+// every other counter's interrupt enable alone.
+inline void pmc_disable_overflow_int(uint64_t mask) {
+  asm volatile("msr pmintenclr_el1, %0\n\tisb" ::"r"(mask) : "memory");
+}
+
 inline uint64_t pmc_period_value(uint32_t counter, uint64_t period) {
   uint32_t width = pmc_overflow_width(counter);
   return width >= 64 ? -period : (-period & ((1ull << width) - 1));
@@ -281,8 +331,11 @@ inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
                            std::move(handler));
 }
 
-inline void pmc_detach_overflow_handler(PMCIntHandle irq) {
-  asm volatile("msr pmintenclr_el1, %0\n\tisb" ::"r"(~0ull) : "memory");
+// Disables only the counters named by `mask`. Clearing PMINTENSET wholesale
+// would silently switch off the wrap-counting handler, which shares this
+// interrupt and has no way to notice.
+inline void pmc_detach_overflow_handler(PMCIntHandle irq, uint64_t mask) {
+  pmc_disable_overflow_int(mask);
   delete irq;
 }
 
@@ -422,16 +475,25 @@ constexpr PMCEvent STALL_OP = {0x3F, CORE, ""};
 // Level 2 data cache long-latency read miss (Armv8.4/Armv9 0x40xx range).
 constexpr PMCEvent L2D_CACHE_LMISS_RD = {0x4009, CORE, "l2d-cache-misses"};
 
-inline const PMCEvent L2D_CACHE_MISS =
-    pmu_event_support(L2D_CACHE_LMISS_RD.bitmap) == event_support::yes
-        ? L2D_CACHE_LMISS_RD
-        : L2D_CACHE_REFILL;
+// Resolved on the cpu that reads it, not latched at static-init time: on an
+// asymmetric SoC the two clusters implement different events, and a choice made
+// once on the boot cpu would be wrong on the other cluster. Converts to
+// PMCEvent, so it is still spelled like the plain event constants around it.
+struct L2DCacheMissEvent {
+  operator PMCEvent() const {
+    return pmu_event_support(L2D_CACHE_LMISS_RD.bitmap) == event_support::yes
+               ? L2D_CACHE_LMISS_RD
+               : L2D_CACHE_REFILL;
+  }
+};
+inline constexpr L2DCacheMissEvent L2D_CACHE_MISS{};
 } // namespace PERF_COUNT_HW
 
 inline void pmu_dump_state() {
   uint64_t pmcnten;
   asm volatile("mrs %0, pmcntenset_el0" : "=r"(pmcnten));
-  std::cout << "PMU: midr=0x" << std::hex << midr_read() << " pmcr=0x"
+  std::cout << "PMU: core=" << midr_core_name(midr_read()) << " midr=0x"
+            << std::hex << midr_read() << " pmcr=0x"
             << pmcr_read() << " pmceid0=0x" << pmceid0_read() << " pmceid1=0x"
             << pmceid1_read() << " pmcntenset=0x" << pmcnten << std::dec
             << " counters=" << pmu_num_counters()
