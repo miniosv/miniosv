@@ -85,3 +85,9 @@ the heap.
 
 `heap` and `early` share one interface (`takes`, `alloc`, `free`, `size_of`,
 `owns`), so the libc `malloc` treats them alike.
+
+## libc support
+
+The memory subsystem integrates with the standard libc/libc++ to facilitate the porting effort. 
+`malloc`/`calloc`/`new` and other memory allocation functions are routed to the heap allocator.
+`mmap` only supports anonymous memory mappings (with `fd` = -1). It also eagerly allocates the frames for the virtual memory region and maps them at creation time.
