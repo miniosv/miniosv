@@ -41,6 +41,9 @@
 #ifndef CONF_memory_pressure_percent
 #define CONF_memory_pressure_percent 10
 #endif
+#ifndef CONF_pagecache_stats
+#define CONF_pagecache_stats 0
+#endif
 #ifndef CONF_preempt
 #define CONF_preempt 1
 #endif

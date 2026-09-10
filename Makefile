@@ -147,6 +147,8 @@ conf_memory_pressure_percent=10
 # Count allocation sizes and how many frees arrive knowing the size; off in a
 # normal build.
 conf_memory_histogram=0
+# Per-fault timings and counters of the page cache; off in a normal build.
+conf_pagecache_stats=0
 
 # --- filesystem ------------------------------------------------------------
 conf_fs_max_file_descriptors=0x4000
@@ -326,7 +328,8 @@ $(out)/libc/%.o: source-dialects =
 
 kernel-defines = -D_KERNEL $(source-dialects) \
 	-DCONF_memory_pressure_percent=$(conf_memory_pressure_percent) \
-	-DCONF_memory_histogram=$(conf_memory_histogram)
+	-DCONF_memory_histogram=$(conf_memory_histogram) \
+	-DCONF_pagecache_stats=$(conf_pagecache_stats)
 
 # This play the same role as "_KERNEL", but _KERNEL unfortunately is too
 # overloaded. A lot of files will expect it to be set no matter what, specially
@@ -641,6 +644,12 @@ objects += core/mem/heap/histogram.o
 objects += core/mem/heap/large.o
 objects += core/mem/heap/objects.o
 objects += core/mem/heap/window.o
+# The page cache: an object bigger than memory, backed on demand from a store.
+objects += core/mem/store.o
+objects += core/mem/pagecache/cache.o
+objects += core/mem/pagecache/reclaim.o
+objects += core/mem/pagecache/s3fifo.o
+objects += core/mem/pagecache/stats.o
 # llfree is vendored C and does not build under the kernel's -Werror.
 $(out)/external/llfree/%.o: CFLAGS += -w -Wno-error -I external/llfree
 $(out)/core/mem/frames/%.o: CXXFLAGS += -I external/llfree

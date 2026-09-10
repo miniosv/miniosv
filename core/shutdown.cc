@@ -4,6 +4,7 @@
 #include <osv/sched.hh>
 #include <osv/strace.hh>
 #include <osv/kernel_config.h>
+#include <osv/mem/pagecache.hh>
 
 namespace osv {
 
@@ -25,6 +26,8 @@ void shutdown()
             }
         });
     }
+
+    mem::pagecache::stats_dump();
 
     debug("Powering off.\n");
     osv::poweroff();
