@@ -86,15 +86,21 @@ def find_firmware(arch):
                  % (arch, pkg, prefix, prefix))
     return code, vars_
 
-def setup_pflash(arch, code, vars_, workdir):
+def setup_pflash(arch, code, vars_, pflash_dir, workdir):
     # pflash needs a writable copy of the variable store; the aarch64 virt
     # pflash also requires the firmware images to be exactly 64 MiB.
+    # We persist vars.fd in the build directory alongside the image so the
+    # firmware retains boot order and NVRAM settings across runs, avoiding
+    # first-boot device enumeration delays.
+    os.makedirs(pflash_dir, exist_ok=True)
+    vars_copy = os.path.join(pflash_dir, 'vars.fd')
+    if not os.path.exists(vars_copy):
+        shutil.copy(vars_, vars_copy)
+        os.chmod(vars_copy, 0o644)
+
     code_copy = os.path.join(workdir, 'code.fd')
-    vars_copy = os.path.join(workdir, 'vars.fd')
     shutil.copy(code, code_copy)
-    shutil.copy(vars_, vars_copy)
     os.chmod(code_copy, 0o644)
-    os.chmod(vars_copy, 0o644)
     if arch == 'aarch64':
         for f in (code_copy, vars_copy):
             with open(f, 'r+b') as fh:
@@ -103,9 +109,10 @@ def setup_pflash(arch, code, vars_, workdir):
 
 def start_osv_qemu(options):
     workdir = tempfile.mkdtemp(prefix='miniosv-run-')
+    pflash_dir = os.path.dirname(os.path.abspath(options.image_file))
     try:
         code, vars_ = find_firmware(options.arch)
-        code_copy, vars_copy = setup_pflash(options.arch, code, vars_, workdir)
+        code_copy, vars_copy = setup_pflash(options.arch, code, vars_, pflash_dir, workdir)
 
         use_kvm = options.hypervisor == 'kvm'
 
@@ -127,9 +134,10 @@ def start_osv_qemu(options):
             "-drive", "if=pflash,format=raw,readonly=on,file=%s" % code_copy,
             "-drive", "if=pflash,format=raw,file=%s" % vars_copy]
 
-        # Skip the firmware's boot-menu countdown. AAVMF waits 5 seconds by
-        # default, OVMF none; this makes both wait nothing.
-        args += ["-boot", "menu=on,splash-time=0"]
+        # Skip the firmware's boot-menu countdown on aarch64 (AAVMF default is 5s).
+        # On x86_64, OVMF has no countdown and menu=on can trigger boot menu waits.
+        if options.arch == 'aarch64':
+            args += ["-boot", "menu=on,splash-time=0"]
 
         # Boot disk: the GPT/ESP image as an NVMe drive. The firmware finds
         # \EFI\BOOT\BOOT{X64,AA64}.EFI on it, exactly as on AWS Nitro.
