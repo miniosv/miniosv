@@ -1,3 +1,4 @@
+#include <osv/mem/phys.hh>
 /*
  * Copyright (C) 2014 Huawei Technologies Duesseldorf GmbH
  * Copyright (C) 2024 Waldemar Kozaczuk
@@ -10,12 +11,14 @@
 #define GIC_V2_HH
 
 #include "gic-common.hh"
+#include <osv/mem/mapping.hh>
+#include <osv/mem/frames.hh>
 
 namespace gic {
 
 class gic_v2_dist : public gic_dist {
 public:
-    gic_v2_dist(mmu::phys b, size_t l) : gic_dist(b, l) {}
+    gic_v2_dist(mem::frames::phys_addr b, size_t l) : gic_dist(b, l) {}
 
     void enable();
     void disable();
@@ -46,26 +49,26 @@ enum class gicc_reg : unsigned int {
 /* GIC CPU Interface */
 class gic_v2_cpu {
 public:
-    gic_v2_cpu(mmu::phys b, size_t l);
+    gic_v2_cpu(mem::frames::phys_addr b, size_t l);
 
     u32 read_reg(gicc_reg r);
     void write_reg(gicc_reg r, u32 value);
 
     void enable();
 protected:
-    mmu::phys _base;
+    mem::frames::phys_addr _base;
 };
 
 class gic_v2_driver : public gic_driver {
 public:
-    gic_v2_driver(mmu::phys d, size_t d_len,
-                  mmu::phys c, size_t c_len,
-                  mmu::phys v2m, size_t v2m_len ) :
+    gic_v2_driver(mem::frames::phys_addr d, size_t d_len,
+                  mem::frames::phys_addr c, size_t c_len,
+                  mem::frames::phys_addr v2m, size_t v2m_len ) :
         _gicd(d, d_len), _gicc(c, c_len), _v2m_base(v2m)
     {
         if (v2m && v2m_len) {
-            mmu::linear_map((void *)_v2m_base, _v2m_base, v2m_len, "gic_v2m",
-                            mmu::page_size, mmu::mattr::dev);
+            mem::map_phys_at((void *)_v2m_base, _v2m_base, v2m_len,
+                            mem::mapping::page_size, mem::mattr::dev);
         }
     }
 
@@ -102,7 +105,7 @@ private:
 
     gic_v2_dist _gicd;
     gic_v2_cpu _gicc;
-    mmu::phys _v2m_base;
+    mem::frames::phys_addr _v2m_base;
 };
 
 }

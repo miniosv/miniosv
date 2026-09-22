@@ -49,6 +49,7 @@
 
 #include "gic-common.hh"
 #include <osv/spinlock.h>
+#include <osv/mem/frames.hh>
 
 #define GICD_CTLR_WRITE_COMPLETE   (1UL << 31)
 #define GICD_CTLR_ARE_NS           (1U << 4)
@@ -160,7 +161,7 @@ namespace gic {
 
 class gic_v3_dist : public gic_dist {
 public:
-    gic_v3_dist(mmu::phys b, size_t l) : gic_dist(b, l) {}
+    gic_v3_dist(mem::frames::phys_addr b, size_t l) : gic_dist(b, l) {}
 
     void enable();
     void disable();
@@ -178,7 +179,7 @@ public:
 //Redistributor interface
 class gic_v3_redist {
 public:
-    gic_v3_redist(const mmu::phys *bases, const size_t *lens, int count);
+    gic_v3_redist(const mem::frames::phys_addr *bases, const size_t *lens, int count);
 
     void init_cpu_base(int smp_idx);
     void init_lpis(int smp_idx, u64 prop_base, u64 pend_base);
@@ -189,15 +190,15 @@ public:
     void write64_at_offset(int smp_idx, u32 offset, u64 value);
 
     void init_rdbase(int smp_idx, bool pta);
-    inline mmu::phys rdbase(int smp_idx) { return _rdbases[smp_idx]; }
+    inline mem::frames::phys_addr rdbase(int smp_idx) { return _rdbases[smp_idx]; }
 
     void wait_for_write_complete(int smp_idx);
 private:
-    mmu::phys _region_base[MAX_GICR_REGIONS];
+    mem::frames::phys_addr _region_base[MAX_GICR_REGIONS];
     size_t    _region_len[MAX_GICR_REGIONS];
     int       _nr_regions;
-    mmu::phys *_cpu_bases;
-    mmu::phys *_rdbases;
+    mem::frames::phys_addr *_cpu_bases;
+    mem::frames::phys_addr *_rdbases;
 };
 
 //See https://developer.arm.com/documentation/ddi0601/2024-09/External-Registers/GITS-BASER-n---ITS-Table-Descriptors
@@ -257,7 +258,7 @@ struct its_cmd {
 //Interrupt Translation Service interface
 class gic_v3_its {
 public:
-    gic_v3_its(mmu::phys b, size_t l);
+    gic_v3_its(mem::frames::phys_addr b, size_t l);
 
     u64 read_reg64(gic_its_reg r);
     u64 read_reg64_at_offset(gic_its_reg r, u32 offset);
@@ -274,16 +275,16 @@ public:
     void cmd_movi(u32 dev_id, int vector, int smp_idx);
     void cmd_inv(u32 dev_id, int vector);
     void cmd_discard(u32 dev_id, int vector);
-    void cmd_sync(mmu::phys rdbase);
-    void cmd_mapc(int smp_idx, mmu::phys rdbase);
+    void cmd_sync(mem::frames::phys_addr rdbase);
+    void cmd_mapc(int smp_idx, mem::frames::phys_addr rdbase);
 
     bool is_typer_pta() { return _typer & GITS_TYPER_PTA; }
     u64 itt_entry_size() { return GITS_ITT_entry_size(_typer); }
 
-    mmu::phys base() { return _base; }
+    mem::frames::phys_addr base() { return _base; }
 
 private:
-    mmu::phys _base;
+    mem::frames::phys_addr _base;
     void *_cmd_queue;
     u64 _typer;
 };
@@ -292,9 +293,9 @@ constexpr int max_sgi_cpus = 16;
 
 class gic_v3_driver : public gic_driver {
 public:
-    gic_v3_driver(mmu::phys d, size_t d_len,
-                  const mmu::phys *r_bases, const size_t *r_lens, int r_count,
-                  mmu::phys i, size_t i_len) :
+    gic_v3_driver(mem::frames::phys_addr d, size_t d_len,
+                  const mem::frames::phys_addr *r_bases, const size_t *r_lens, int r_count,
+                  mem::frames::phys_addr i, size_t i_len) :
         _gicd(d, d_len), _gicrd(r_bases, r_lens, r_count), _gits(i, i_len) {}
 
     virtual void init_on_primary_cpu()

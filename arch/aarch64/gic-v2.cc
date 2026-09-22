@@ -6,14 +6,19 @@
  * BSD license as described in the LICENSE file in the top-level directory.
  */
 
+#include <cassert>
+
 #include <osv/mmio.hh>
-#include <osv/mmu.hh>
+#include <osv/mem/phys.hh>
 #include <osv/kernel_config.h>
 #include <drivers/pci-function.hh>
 
 #include "processor.hh"
 #include "gic-v2.hh"
 #include "arm-clock.hh"
+#include "exceptions.hh"
+#include <osv/mem/mapping.hh>
+#include <osv/mem/frames.hh>
 
 extern class interrupt_table idt;
 
@@ -61,9 +66,9 @@ void gic_v2_dist::write_reg_grp(gicd_reg_irq2 reg, unsigned int irq, u8 value)
     mmio_setl(mmio_a((mmioaddr_t)_base, offset), old);
 }
 
-gic_v2_cpu::gic_v2_cpu(mmu::phys b, size_t l) : _base(b)
+gic_v2_cpu::gic_v2_cpu(mem::frames::phys_addr b, size_t l) : _base(b)
 {
-    mmu::linear_map((void *)_base, _base, l, "gic_cpuif", mmu::page_size, mmu::mattr::dev);
+    mem::map_phys_at((void *)_base, _base, l, mem::mapping::page_size, mem::mattr::dev);
 }
 
 u32 gic_v2_cpu::read_reg(gicc_reg reg)

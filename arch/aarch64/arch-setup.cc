@@ -11,7 +11,8 @@
 #include <osv/kernel_config.h>
 #include "arch-setup.hh"
 #include <osv/sched.hh>
-#include <osv/mempool.hh>
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
 #include <osv/elf.hh>
 #include <osv/types.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 #include <osv/debug.hh>
 #include <osv/commands.hh>
 
-#include "arch-mmu.hh"
+#include <mem.hh>
 #include "gic-v2.hh"
 #include "gic-v3.hh"
 #include "drivers/acpi.hh"
@@ -81,14 +82,14 @@ void free_usable(u64 rstart, u64 rend, u64 lo, u64 hi, u64 kstart, u64 kend)
         return;
     }
     if (e <= kstart || s >= kend) {          // entirely outside the kernel
-        mmu::free_initial_memory_range(s, e - s);
+        mem::frames::add_region(s, e - s);
         return;
     }
     if (s < kstart) {                        // part below the kernel
-        mmu::free_initial_memory_range(s, kstart - s);
+        mem::frames::add_region(s, kstart - s);
     }
     if (e > kend) {                          // part above the kernel
-        mmu::free_initial_memory_range(kend, e - kend);
+        mem::frames::add_region(kend, e - kend);
     }
 }
 }
@@ -125,11 +126,11 @@ void __attribute__((constructor(init_prio::dtb))) uefi_memory_setup()
         for (u64 b = first; b < last; b++)
             ident_pt_l2_0_ttbr0[b] = (b * BLOCK) | 0x411;  // Normal cacheable block
     }
-    mmu::flush_tlb_all();
+    mem::mapping::flush_all();
 
     // mem_addr is the 2MB-aligned base the boot page tables map the kernel
     // window onto. The UEFI stub loaded the kernel here with AllocatePages.
-    mmu::mem_addr = kbase & ~((u64)0x200000 - 1);
+    mem::frames::ram_base = kbase & ~((u64)0x200000 - 1);
 
     // Record every usable RAM range the firmware reports and total them up.
     // The old code grew a single contiguous run upward from the kernel base and
@@ -145,9 +146,9 @@ void __attribute__((constructor(init_prio::dtb))) uefi_memory_setup()
     if (usable_range_count == 0) {
         abort("uefi_memory_setup: firmware reported no usable memory.\n");
     }
-    memory::phys_mem_size = 0;
+    mem::frames::phys_mem_size = 0;
     for (unsigned i = 0; i < usable_range_count; i++) {
-        memory::phys_mem_size += usable_ranges[i].size;
+        mem::frames::phys_mem_size += usable_ranges[i].size;
     }
 
     // Command line and wall-clock base provided by the UEFI stub.
@@ -161,8 +162,8 @@ void __attribute__((constructor(init_prio::dtb))) uefi_memory_setup()
     extern size_t elf_size;
     extern void *elf_start;
     extern u64 kernel_vm_shift;
-    mmu::elf_phys_start = reinterpret_cast<void *>(elf_header);
-    elf_start = static_cast<char *>(mmu::elf_phys_start) + kernel_vm_shift;
+    mem::frames::elf_phys_start = reinterpret_cast<void *>(elf_header);
+    elf_start = static_cast<char *>(mem::frames::elf_phys_start) + kernel_vm_shift;
     elf_size = (u64)edata - (u64)elf_start;
     // phys_mem_size is the true total of usable RAM (reported via
     // sysconf(_SC_PHYS_PAGES)); the kernel image's pages are simply not handed
@@ -173,11 +174,8 @@ void setup_temporary_phys_map()
 {
     // duplicate 1:1 mapping into the lower part of phys_mem
     u64 *pt_ttbr0 = reinterpret_cast<u64*>(processor::read_ttbr0());
-    for (auto&& area : mmu::identity_mapped_areas) {
-        auto base = reinterpret_cast<void*>(get_mem_area_base(area));
-        pt_ttbr0[mmu::pt_index(base, 3)] = pt_ttbr0[0];
-    }
-    mmu::flush_tlb_all();
+    pt_ttbr0[mem::mapping::pt_index(mem::linear, 3)] = pt_ttbr0[0];
+    mem::mapping::flush_all();
 }
 
 #if CONF_drivers_pci
@@ -202,14 +200,14 @@ void arch_setup_pci()
 
     pci::set_pci_ecam(true);
     pci::set_pci_cfg(ecam_base, ecam_len);
-    mmu::linear_map((void *)ecam_base, (mmu::phys)ecam_base, ecam_len,
-                    "pci_cfg", mmu::page_size, mmu::mattr::dev);
+    mem::map_phys_at((void *)ecam_base, (mem::frames::phys_addr)ecam_base, ecam_len, mem::mapping::page_size, mem::mattr::dev);
 }
 #endif
 
 extern bool opt_pci_disabled;
 void arch_setup_free_memory()
 {
+    mem::mapping::detect_hw_dirty();
     setup_temporary_phys_map();
 
     /* import from loader.cc */
@@ -218,8 +216,8 @@ void arch_setup_free_memory()
 
     // The kernel image (boot trampoline + DTB copy + ELF) occupies
     // [mem_addr, addr); everything else in the usable ranges is free RAM.
-    mmu::phys addr = (mmu::phys)elf_header + elf_size;
-    const u64 kernel_start = mmu::mem_addr;
+    mem::frames::phys_addr addr = (mem::frames::phys_addr)elf_header + elf_size;
+    const u64 kernel_start = mem::frames::ram_base;
     const u64 kernel_end = addr;
 
     // linear_map() allocates its own page-table pages from the page allocator
@@ -256,32 +254,27 @@ void arch_setup_free_memory()
     // everything block-aligned, map_phys() only ever rewrites an identical block.
     // The extra reserved bytes pulled in by rounding are never freed (steps 1/3
     // free the exact ranges only).
-    for (auto&& area : mmu::identity_mapped_areas) {
-        auto base = reinterpret_cast<char*>(get_mem_area_base(area));
-        const char *name = area == mmu::mem_area::main ? "main" :
-                           area == mmu::mem_area::page ? "page" : "mempool";
-        for (unsigned i = 0; i < usable_range_count; i++) {
-            u64 rstart = usable_ranges[i].addr;
-            u64 rend = rstart + usable_ranges[i].size;
-            u64 mstart = rstart & ~(mmu::huge_page_size - 1);
-            u64 mend = (rend + mmu::huge_page_size - 1) & ~(mmu::huge_page_size - 1);
-            mmu::linear_map(base + mstart, mstart, mend - mstart, name);
-        }
+    for (unsigned i = 0; i < usable_range_count; i++) {
+        u64 rstart = usable_ranges[i].addr;
+        u64 rend = rstart + usable_ranges[i].size;
+        u64 mstart = rstart & ~(mem::mapping::huge_page_size - 1);
+        u64 mend = (rend + mem::mapping::huge_page_size - 1) & ~(mem::mapping::huge_page_size - 1);
+        mem::map_phys_at(mem::linear + mstart, mstart, mend - mstart);
     }
 
     /* linear_map [TTBR0 - boot, DTB and ELF] */
-    /* physical memory layout - relative to the 2MB-aligned address PA stored in mmu::mem_addr
+    /* physical memory layout - relative to the 2MB-aligned address PA stored in mem::frames::ram_base
        PA +     0x0 - PA + 0x80000: boot
        PA + 0x80000 - PA + 0x90000: DTB copy
        PA + 0x90000 -       [addr]: kernel ELF */
-    mmu::linear_map((void *)(OSV_KERNEL_VM_BASE - 0x80000), (mmu::phys)mmu::mem_addr,
-                    addr - mmu::mem_addr, "kernel");
+    mem::map_phys_at((void *)(OSV_KERNEL_VM_BASE - 0x80000), (mem::frames::phys_addr)mem::frames::ram_base,
+                    addr - mem::frames::ram_base);
 
     if (console::PL011_Console::active) {
         /* linear_map [TTBR0 - UART] */
-        addr = (mmu::phys)console::aarch64_console.pl011.get_base_addr();
-        mmu::linear_map((void *)addr, addr, 0x1000, "pl011", mmu::page_size,
-                        mmu::mattr::dev);
+        addr = (mem::frames::phys_addr)console::aarch64_console.pl011.get_base_addr();
+        mem::map_phys_at((void *)addr, addr, 0x1000, mem::mapping::page_size,
+                        mem::mattr::dev);
     }
 
     // The GIC is discovered from the ACPI MADT and constructed in a constructor
@@ -294,12 +287,13 @@ void arch_setup_free_memory()
     // statically linked in), so there is no parse_cmdline step.
     console::mmio_isa_serial_console::clean_cmdline(cmdline);
 
-    mmu::switch_to_runtime_page_tables();
+    mem::mapping::switch_to_runtime_page_tables();
 
     // Step 3: hand the high RAM (>= initial_map) to the allocator. This must run
     // AFTER the switch: the per-range linear maps built above live in the
-    // runtime page tables (get_root_pt writes page_table_root[], not the boot
-    // tables), and the page allocator writes bookkeeping - the page_range header
+    // runtime page tables (the mapping layer's root_slot() names
+    // page_table_root[], not the boot tables), and the page allocator writes
+    // bookkeeping - the page_range header
     // and a trailing back-pointer - at the START and END of each freed range
     // through the linear-map window. Those addresses only resolve once the
     // runtime tables are active; the boot temporary map only covers the low
@@ -366,10 +360,10 @@ static void __attribute__((constructor(init_prio::gic))) init_gic_acpi()
     // separate and prefer the GICR subtables; fall back to the GICC form only
     // when no GICR subtable is present (the two are mutually exclusive in
     // practice, and a system using GICR subtables sets gicr_base_address to 0).
-    mmu::phys gicr_base[MAX_GICR_REGIONS];
+    mem::frames::phys_addr gicr_base[MAX_GICR_REGIONS];
     size_t    gicr_len[MAX_GICR_REGIONS];
     int       nr_gicr = 0;
-    mmu::phys gicc_redist_base[MAX_GICR_REGIONS];
+    mem::frames::phys_addr gicc_redist_base[MAX_GICR_REGIONS];
     int       nr_gicc_redist = 0;
 
     auto subtable = reinterpret_cast<const char*>(madt + 1);
@@ -442,6 +436,7 @@ static void __attribute__((constructor(init_prio::gic))) init_gic_acpi()
 #endif
 
 #include "drivers/driver.hh"
+#include <osv/mem/mapping.hh>
 
 void arch_init_drivers()
 {
