@@ -71,7 +71,7 @@ struct PMC {
     return *this;
   }
 
-  uint64_t probe() const { return pmc_read(perfCtr); }
+  uint64_t read() const { return pmc_read(perfCtr); }
 
   void start_with_conf(uint64_t value, uint64_t initial = 0) {
     pmc_write_counter(perfCtr, initial);
@@ -213,13 +213,13 @@ struct Event {
       return;
     }
     pmc->start_with_conf(pmce.bitmap);
-    before = pmc->probe();
+    before = pmc->read();
   }
 
   void stop() {
     if (!pmc)
       return;
-    after = pmc->probe();
+    after = pmc->read();
     pmc->stop();
     pmcs.release(pmc);
   }
@@ -394,14 +394,14 @@ public:
   }
 };
 
-struct PMCSampler {
-  PMCSampler(uint64_t period, std::function<void(exception_frame *)> handler,
-             PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
+struct PerfSampler {
+  PerfSampler(uint64_t period, std::function<void(exception_frame *)> handler,
+              PMCEvent pmce = PERF_COUNT_HW::CPU_CYCLES)
       : period(period), handler(std::move(handler)), pmce(pmce) {
     enable_pmu();
   }
 
-  ~PMCSampler() { stop(); }
+  ~PerfSampler() { stop(); }
 
   bool start() {
     if (pmc || !(pmc = pmcs.acquire(pmce.pmClass)))

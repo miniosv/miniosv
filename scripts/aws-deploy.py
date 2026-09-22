@@ -184,6 +184,8 @@ def main():
     parser.add_argument("--image", default="build/last/loader.img",
                         help="Path to the source image file to upload (default: build/last/loader.img)")
     parser.add_argument("--attach", action="store_true", help="Stream system log and terminate instance on Ctrl+C")
+    parser.add_argument("--subnet", default=None, metavar="ID",
+                        help="Subnet to launch into (default: the VPC's default)")
     args = parser.parse_args()
 
     aws_login()
@@ -307,8 +309,9 @@ def main():
     print("Waiting for AMI to become 'available'...")
     ec2_client.get_waiter('image_available').wait(ImageIds=[ami_id])
 
-    print(f"Launching {instance} instance from {ami_id}...")
-    run_response = ec2_client.run_instances(
+    print(f"Launching {instance} instance from {ami_id}"
+          f"{f' in {args.subnet}' if args.subnet else ''}...")
+    run_kwargs = dict(
         ImageId=ami_id,
         InstanceType=instance,
         MinCount=1,
@@ -320,6 +323,9 @@ def main():
             }
         ],
     )
+    if args.subnet:
+        run_kwargs["SubnetId"] = args.subnet
+    run_response = ec2_client.run_instances(**run_kwargs)
 
     instance_id = run_response["Instances"][0]["InstanceId"]
     print(f"Launched instance: {instance_id}")

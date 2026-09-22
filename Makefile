@@ -398,6 +398,11 @@ $(out)/%.o: %.cc | generated-headers $(out)/.libcxx-built
 	$(makedir)
 	$(call quiet, $(CXX) $(CXXFLAGS) -c -o $@ $<, CXX $*.cc)
 
+# The kernel itself uses .cc throughout; .cpp is here for the applications
+$(out)/%.o: %.cpp | generated-headers $(out)/.libcxx-built
+	$(makedir)
+	$(call quiet, $(CXX) $(CXXFLAGS) -c -o $@ $<, CXX $*.cpp)
+
 $(out)/%.o: %.c | generated-headers
 	$(makedir)
 	$(call quiet, $(CC) $(CFLAGS) -c -o $@ $<, CC $*.c)
@@ -549,6 +554,17 @@ $(app_mode_dep): app_mode_phony
 	$(call very-quiet, $(makedir))
 	@if [ "$$(cat $(app_mode_dep) 2>/dev/null)" != "$(app)" ]; then \
 		echo -n "$(app)" > $(app_mode_dep); \
+	fi
+
+# Set the location of the application for the defered constructors.
+# see .init_array_late in arch/$(arch)/loader.ld)
+app_init_late = $(out)/app_init_late.ld
+app_objs = *$(patsubst %/,%,$(app))/*
+app_init_late_pattern = KEEP($(app_objs)(SORT_BY_INIT_PRIORITY(.init_array.*) SORT_BY_INIT_PRIORITY(.ctors.*))) KEEP($(app_objs)(.init_array .ctors))
+$(app_init_late): app_mode_phony
+	$(call very-quiet, $(makedir))
+	@if [ "$$(cat $(app_init_late) 2>/dev/null)" != "$(app_init_late_pattern)" ]; then \
+		echo '$(app_init_late_pattern)' > $(app_init_late); \
 	fi
 # Minimal boot-time self-relocator (replaces the relocation half of the old
 # ELF loader). Per-arch: the relocation-type switch differs (x64 vs aarch64).
@@ -872,10 +888,22 @@ def_symbols = --defsym=OSV_KERNEL_BASE=$(kernel_base) \
               --defsym=OSV_KERNEL_VM_SHIFT=$(kernel_vm_shift)
 endif
 
-$(out)/loader.elf: $(stage1_targets) arch/$(arch)/loader.ld $(app_mode_dep) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep)
+# The objects go to the linker through a response file, one per line: a large
+# application overflows the argument list.
+empty :=
+space := $(empty) $(empty)
+define newline
+
+
+endef
+link-inputs = $(patsubst %.ld,-T %.ld,$(filter-out $(app_mode_dep) $(app_init_late) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep),$^))
+
+$(out)/loader.elf: $(stage1_targets) arch/$(arch)/loader.ld $(app_mode_dep) $(app_init_late) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep)
+	$(call very-quiet, $(makedir))
+	$(file > $@.objects,$(subst $(space),$(newline),$(link-inputs)))
 	$(call quiet, $(LD) -o $@ $(def_symbols) \
-		-static --eh-frame-hdr -L$(out)/arch/$(arch) \
-            $(patsubst %.ld,-T %.ld,$(filter-out $(app_mode_dep) $(llvm_libc_dep) $(libcxx_dep) $(compiler_rt_dep),$^)) \
+		-static --eh-frame-hdr -L$(out)/arch/$(arch) -L$(out) \
+	    @$@.objects \
 	    $(linker_archives_options) $(conf_linker_extra_options), \
 		LINK loader.elf)
 

@@ -375,7 +375,11 @@ void exit(int status)
 
 // "The function _exit() is like exit(3), but does not call any functions
 // registered with atexit(3) or on_exit(3)."
-//
+OSV_LIBC_API
+void _exit(int status)
+{
+    osv::shutdown();
+}
 
 OSV_LIBC_API
 int atexit(void (*func)())

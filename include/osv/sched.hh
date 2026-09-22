@@ -88,24 +88,44 @@ extern "C" {
 
 namespace bi = boost::intrusive;
 
-const unsigned max_cpus = sizeof(unsigned long) * 8;
+// Maximum number of CPUs the kernel supports. Must be a multiple of 64
+const unsigned max_cpus = 256;
+static_assert(max_cpus % 64 == 0 && max_cpus != 0);
 
+// A lock-free set of CPU ids (0 .. max_cpus-1), stored as an array of atomic words.
 class cpu_set {
+private:
+    static constexpr unsigned bits_per_word = sizeof(unsigned long) * 8;
+    static constexpr unsigned nr_words = max_cpus / bits_per_word;
 public:
-    explicit cpu_set() : _mask() {}
-    cpu_set(const cpu_set& other) : _mask(other._mask.load(std::memory_order_relaxed)) {}
+    explicit cpu_set() {
+        for (auto& w : _words) {
+            w.store(0, std::memory_order_relaxed);
+        }
+    }
+    cpu_set(const cpu_set& other) {
+        for (unsigned i = 0; i < nr_words; i++) {
+            _words[i].store(other._words[i].load(std::memory_order_relaxed),
+                            std::memory_order_relaxed);
+        }
+    }
     void set(unsigned c) {
-        _mask.fetch_or(1UL << c, std::memory_order_release);
+        _words[c / bits_per_word].fetch_or(1UL << (c % bits_per_word),
+                                           std::memory_order_release);
     }
     bool test_and_set(unsigned c) {
-        unsigned bit = 1UL << c;
-        return _mask.fetch_or(bit, std::memory_order_release) & bit;
+        unsigned long bit = 1UL << (c % bits_per_word);
+        return _words[c / bits_per_word].fetch_or(bit, std::memory_order_release)
+               & bit;
     }
+
     bool test_all_and_set(unsigned c) {
-        return _mask.fetch_or(1UL << c, std::memory_order_release);
+        return _words[c / bits_per_word].fetch_or(1UL << (c % bits_per_word),
+                                                  std::memory_order_release);
     }
     void clear(unsigned c) {
-        _mask.fetch_and(~(1UL << c), std::memory_order_release);
+        _words[c / bits_per_word].fetch_and(~(1UL << (c % bits_per_word)),
+                                            std::memory_order_release);
     }
     class iterator;
     iterator begin() {
@@ -116,14 +136,21 @@ public:
     }
     cpu_set fetch_clear() {
         cpu_set ret;
-        if (_mask.load(std::memory_order_relaxed)) {
-            ret._mask.store(_mask.exchange(0, std::memory_order_acquire),
-                            std::memory_order_relaxed);
+        for (unsigned i = 0; i < nr_words; i++) {
+            if (_words[i].load(std::memory_order_relaxed)) {
+                ret._words[i].store(_words[i].exchange(0, std::memory_order_acquire),
+                                    std::memory_order_relaxed);
+            }
         }
         return ret;
     }
     operator bool() const {
-        return _mask.load(std::memory_order_relaxed);
+        for (unsigned i = 0; i < nr_words; i++) {
+            if (_words[i].load(std::memory_order_relaxed)) {
+                return true;
+            }
+        }
+        return false;
     }
     class iterator {
     public:
@@ -161,21 +188,29 @@ public:
             return _idx != other._idx;
         }
     private:
+        // Advance _idx to the next set bit at or after its current value,
+        // scanning word by word; parks at max_cpus when none remain.
         void advance() {
-            unsigned long tmp = _set._mask.load(std::memory_order_relaxed);
-            tmp &= ~((1UL << _idx) - 1);
-            if (tmp) {
-                _idx = __builtin_ctzl(tmp);
-            } else {
-                _idx = max_cpus;
+            unsigned idx = _idx;
+            while (idx < max_cpus) {
+                unsigned w = idx / bits_per_word;
+                unsigned b = idx % bits_per_word;
+                unsigned long overflow = _set._words[w].load(std::memory_order_relaxed)
+                                    & ~((1UL << b) - 1);
+                if (overflow) {
+                    _idx = w * bits_per_word + __builtin_ctzl(overflow);
+                    return;
+                }
+                idx = (w + 1) * bits_per_word;
             }
+            _idx = max_cpus;
         }
     private:
         cpu_set& _set;
         unsigned _idx;
     };
 private:
-    std::atomic<unsigned long> _mask;
+    std::atomic<unsigned long> _words[nr_words];
 };
 
 class timer_base {

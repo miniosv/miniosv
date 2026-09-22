@@ -85,6 +85,7 @@ _progress_run "$BUILD_DIR-configure.log" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_PROJECT_INCLUDE="$OSV_ROOT/scripts/require-clang.cmake" \
         -DLLVM_ENABLE_RUNTIMES=libc \
         -DLLVM_LIBC_FULL_BUILD=ON \
         -DLIBC_TARGET_TRIPLE="$llvm_arch-none-elf" \

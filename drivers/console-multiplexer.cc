@@ -36,6 +36,29 @@ void console_multiplexer::drivers_write(const char *str, size_t len)
         driver->write(str, len);
 }
 
+int console_multiplexer::read_char()
+{
+    SCOPE_LOCK(_mutex);
+    for (auto driver : _drivers) {
+        int c = driver->read_char();
+        if (c >= 0) {
+            return c;
+        }
+    }
+    return -1;
+}
+
+bool console_multiplexer::input_available()
+{
+    SCOPE_LOCK(_mutex);
+    for (auto driver : _drivers) {
+        if (driver->input_available()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void console_multiplexer::drivers_flush()
 {
     for (auto driver : _drivers)

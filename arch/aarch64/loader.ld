@@ -100,6 +100,9 @@ SECTIONS
     HIDDEN(_init_array_late_start = .);
     .init_array_late : {
         KEEP(*(.init_array.100))
+        /* The application's own constructors are deferred for the same
+         * reason. Its object path comes from the Makefile. */
+        INCLUDE app_init_late.ld
     } : text
     HIDDEN(_init_array_late_end = .);
     . = ALIGN(16);

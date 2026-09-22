@@ -75,6 +75,9 @@ SECTIONS
     HIDDEN(_init_array_late_start = .);
     .init_array_late : AT(ADDR(.init_array_late) - OSV_KERNEL_VM_SHIFT) {
         KEEP(*(.init_array.100))
+        /* The application's own constructors are deferred for the same
+         * reason. Its object path comes from the Makefile. */
+        INCLUDE app_init_late.ld
     } : text
     HIDDEN(_init_array_late_end = .);
     HIDDEN(_init_array_start = .);
