@@ -216,7 +216,7 @@ def main():
     parser.add_argument("--attach", action="store_true", help="Stream system log and terminate instance on Ctrl+C")
     parser.add_argument("--subnet", default=None, metavar="ID",
                         help="Subnet to launch into (default: the VPC's default)")
-    parser.add_argument("--market", choices=("on-demand", "spot", "spot-or-on-demand"), default="on-demand",
+    parser.add_argument("--market", choices=("on-demand", "spot", "spot-or-on-demand"), default="spot-or-on-demand",
                         help="Launch market; 'spot' fails if spot cannot be provided, 'spot-or-on-demand' falls back")
     args = parser.parse_args()
 
