@@ -583,6 +583,11 @@ objects += arch/$(arch)/smp.o
 objects += arch/$(arch)/tlsdesc.o
 objects += arch/$(arch)/entry.o
 objects += arch/$(arch)/mmu.o
+# Arch-specific memcmp, overriding the generic libc's. x64 only
+ifeq ($(arch),x64)
+objects += arch/$(arch)/string.o
+$(out)/arch/$(arch)/string.o: CXXFLAGS += -fno-builtin
+endif
 objects += arch/$(arch)/exceptions.o
 objects += arch/$(arch)/dump.o
 objects += arch/$(arch)/cpuid.o
