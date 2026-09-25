@@ -15,7 +15,6 @@
 #include <osv/preempt-lock.hh>
 #include <osv/migration-lock.hh>
 #include <osv/wait_record.hh>
-#include <osv/mempool.hh>
 #include <osv/kernel_config.h>
 
 namespace osv {
@@ -106,7 +105,7 @@ bool all_at_generation(decltype(cpu_quiescent_state_threads)& cqsts,
 
 void cpu_quiescent_state_thread::work()
 {
-    WITH_LOCK(memory::reclaimer_lock) {
+    {
         do_work();
     }
 }

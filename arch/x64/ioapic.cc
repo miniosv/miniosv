@@ -7,13 +7,14 @@
 
 #include <osv/interrupt.hh>
 #include "exceptions.hh"
-#include <osv/mmu.hh>
 #include <osv/mutex.h>
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
 
 namespace ioapic {
 
 constexpr u64 base_phys = 0xfec00000;
-volatile void* const base = mmu::phys_cast<void>(0xfec00000);
+volatile void* base;
 constexpr unsigned index_reg_offset = 0;
 constexpr unsigned data_reg_offset = 0x10;
 
@@ -43,7 +44,7 @@ void write(unsigned reg, u32 data)
 
 void init()
 {
-    mmu::linear_map(const_cast<void*>(base), base_phys, 4096, "ioapic");
+    base = mem::map_phys(base_phys, 4096, mem::mattr::dev);
 }
 
 }

@@ -25,7 +25,6 @@
 # kconfig output and the conf/*.mk value files). Arch/mode-independent defaults:
 conf_preempt=1
 conf_tracing=0
-conf_debug_memory=0
 # debug level logging (enabled automatically in mode=debug)
 conf_logger_debug=0
 conf_debug_elf=0
@@ -140,10 +139,6 @@ conf_core_commands_runscript=1
 conf_core_rcu_defer_queue_size=2000
 conf_core_debug_buffer_size=0xc800
 conf_core_dynamic_percpu_size=65536
-
-# --- memory ----------------------------------------------------------------
-conf_memory_l1_pool_size=512
-conf_memory_page_batch_size=32
 
 # --- filesystem ------------------------------------------------------------
 conf_fs_max_file_descriptors=0x4000
@@ -501,7 +496,6 @@ COMMON += $(wno-extern-c-compat) $(wno-ignored-attributes) $(wno-sometimes-unini
 
 
 drivers :=
-drivers += core/mmu.o
 drivers += arch/$(arch)/early-console.o
 drivers += drivers/console.o
 drivers += drivers/console-multiplexer.o
@@ -582,7 +576,6 @@ objects += arch/$(arch)/backtrace.o
 objects += arch/$(arch)/smp.o
 objects += arch/$(arch)/tlsdesc.o
 objects += arch/$(arch)/entry.o
-objects += arch/$(arch)/mmu.o
 objects += arch/$(arch)/exceptions.o
 objects += arch/$(arch)/dump.o
 objects += arch/$(arch)/cpuid.o
@@ -623,10 +616,36 @@ objects += core/semaphore.o
 objects += core/condvar.o
 objects += core/debug.o
 objects += core/rcu.o
-objects += core/mempool.o
-ifeq ($(conf_memory_tracker),1)
-objects += core/alloctracker.o
-endif
+
+# Physical frames: llfree (external/llfree, MIT) behind core/mem/frames.
+objects += external/llfree/bitfield.o
+objects += external/llfree/child.o
+objects += external/llfree/llfree.o
+objects += external/llfree/local.o
+objects += external/llfree/lower.o
+objects += external/llfree/tree.o
+objects += core/mem/frames/frames.o
+objects += core/mem/frames/boot.o
+objects += core/mem/frames/contiguous.o
+# Virtual address space: a maple tree over every reserved range.
+objects += core/mem/vspace/vspace.o
+objects += core/mem/vspace/maple.o
+# Translation: the page tables and the TLB, over an arch-specific entry format.
+objects += core/mem/mapping/walk.o
+objects += core/mem/mapping/mapping.o
+objects += core/mem/mapping/flush.o
+objects += arch/$(arch)/mem/hw.o
+objects += arch/$(arch)/mem/fault.o
+# Boot-time memory, the linear map, faults, and the allocator before the heap.
+objects += core/mem/boot.o
+objects += core/mem/early.o
+objects += core/mem/phys.o
+objects += core/mem/fault.o
+# The heap behind malloc.
+objects += core/mem/heap.o
+# llfree is vendored C and does not build under the kernel's -Werror.
+$(out)/external/llfree/%.o: CFLAGS += -w -Wno-error -I external/llfree
+$(out)/core/mem/frames/%.o: CXXFLAGS += -I external/llfree
 objects += core/printf.o
 ifeq ($(conf_tracepoints_sampler),1)
 objects += core/sampler.o
@@ -731,6 +750,7 @@ libc += resource.o
 libc += cxa_thread_atexit.o
 libc += cpu_set.o
 libc += malloc_hooks.o
+libc += malloc.o
 
 
 

@@ -11,7 +11,6 @@
 #include "msr.hh"
 #include "apic.hh"
 #include "ioapic.hh"
-#include <osv/mmu.hh>
 #include <string.h>
 #if CONF_drivers_acpi
 #include <drivers/acpi.hh>
@@ -23,6 +22,9 @@
 #include "osv/percpu.hh"
 #include <osv/aligned_new.hh>
 #include <osv/export.h>
+#include <osv/mem/mapping.hh>
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
 
 extern "C" { void smp_main(void); }
 
@@ -137,14 +139,15 @@ static mp_table *find_mp_table(unsigned long base, long length)
 {
     // First find MP floating pointer structure in the physical memory
     // region specified by the base and length
-    char *addr = static_cast<char*>(mmu::phys_to_virt(base));
+    char *addr = static_cast<char*>(mem::map_phys(base, length));
     while (length > 0) {
        if (*reinterpret_cast<uint32_t *>(addr) == MPF_IDENTIFIER) {
            // We found the MP floating pointer structure
            auto mpf_struct = reinterpret_cast<mpf_structure*>(addr);
            // Now let us dereference physical address of MP table itself,
            // check signature and return its virtual address
-           void *mp_table_addr = mmu::phys_to_virt(mpf_struct->configuration_table);
+           void *mp_table_addr = mem::map_phys(mpf_struct->configuration_table,
+                                               sizeof(mp_table));
            if (*static_cast<uint32_t *>(mp_table_addr) == MP_TABLE_IDENTIFIER) {
                return static_cast<mp_table*>(mp_table_addr);
            }
@@ -216,9 +219,9 @@ void smp_init()
     smpboot_cr4 = read_cr4();
     smpboot_efer = rdmsr(msr::IA32_EFER);
     smpboot_cr3 = read_cr3();
-    smpboot_gdt_base = mmu::virt_to_phys(gdt);
-    smpboot_boot_cr3 = mmu::virt_to_phys(ident_pt_l4);
-    memcpy(mmu::phys_to_virt(0), smpboot, smpboot_end - smpboot);
+    smpboot_gdt_base = mem::mapping::to_phys(gdt);
+    smpboot_boot_cr3 = mem::mapping::to_phys(ident_pt_l4);
+    memcpy(mem::map_phys(0, smpboot_end - smpboot), smpboot, smpboot_end - smpboot);
 }
 
 void ap_bringup(sched::cpu* c)

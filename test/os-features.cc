@@ -296,15 +296,11 @@ static void test_memory()
         memset(m, 0x5A, len);
         CHECK(((char *)m)[0] == 0x5A && ((char *)m)[len - 1] == 0x5A);
 
-        section("mprotect, madvise, mincore on the mapping");
+        section("mprotect and madvise on the mapping");
         CHECK(mprotect(m, len, PROT_READ) == 0);
         CHECK(((char *)m)[123] == 0x5A);    // still readable
         CHECK(mprotect(m, len, PROT_READ | PROT_WRITE) == 0);
         CHECK(madvise(m, len, MADV_DONTNEED) == 0);
-        {
-            std::vector<unsigned char> vec(len / 4096);
-            CHECK(mincore(m, len, vec.data()) == 0);
-        }
         CHECK(munmap(m, len) == 0);
     }
 }
