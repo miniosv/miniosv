@@ -49,6 +49,10 @@ constexpr u32 xcr0 = 0;
 constexpr u64 xcr0_x87 = 1u << 0;
 constexpr u64 xcr0_sse = 1u << 1;
 constexpr u64 xcr0_avx = 1u << 2;
+constexpr u64 xcr0_opmask = 1u << 5;
+constexpr u64 xcr0_zmm_hi256 = 1u << 6;
+constexpr u64 xcr0_hi16_zmm = 1u << 7;
+constexpr u64 xcr0_avx512 = xcr0_opmask | xcr0_zmm_hi256 | xcr0_hi16_zmm;
 
 struct cpuid_result {
     u32 a, b, c, d;
@@ -344,12 +348,21 @@ inline u64 ticks()
     return rdtsc();
 }
 
+// Field names are for readability only: the CPU writes each component at its
+// own offset (cpuid(0xd, i).EBX). Only the total size matters, checked in
+// arch_cpu::init_on_cpu().
 struct fpu_state {
     char legacy[512];
     char xsavehdr[24];
     char reserved[40];
     char ymm[256];
+    char mpx[256];       // components 3-4, unused
+    char opmask[64];
+    char zmm_hi256[512];
+    char hi16_zmm[1024];
 } __attribute__((packed));
+
+static_assert(sizeof(fpu_state) == 2688, "fpu_state must cover the AVX-512 xsave area");
 
 inline void fxsave(fpu_state* s)
 {
