@@ -78,6 +78,10 @@ inline cpuid_result cpuid(u32 function, u32 subleaf) {
     return r;
 }
 
+inline u32 xsave_size() {
+    return cpuid(0xd, 0).b;
+}
+
 inline ulong read_cr0() {
     ulong r;
     asm volatile ("mov %%cr0, %0" : "=r"(r));
