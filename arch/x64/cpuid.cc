@@ -77,6 +77,7 @@ cpuid_bit cpuid_bits[] = {
     { 1, 'd', 19, &f::clflush, 0, nullptr, "clflush" },
     { 7, 'b', 0, &f::fsgsbase, 0, nullptr, "fgsbase" },
     { 7, 'b', 9, &f::repmovsb, 0, nullptr, "repmovsb" },
+    { 7, 'b', 16, &f::avx512f, 0, nullptr, "avx512f" },
     { 0x80000001, 'd', 26, &f::gbpage, 0, nullptr, "gbpage" },
     { 0x80000007, 'd', 8, &f::invariant_tsc, 0, nullptr, "invariant_tsc"},
     { 0x40000001, 'a', 0, &f::kvm_clocksource, 0, &kvm_signature, "kvmclock" },
