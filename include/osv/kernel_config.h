@@ -24,7 +24,7 @@
 #define CONF_fs_max_file_descriptors 0x4000
 #endif
 #ifndef CONF_interrupt_stack_size
-#define CONF_interrupt_stack_size 0x1000
+#define CONF_interrupt_stack_size 0x2000
 #endif
 #ifndef CONF_lazy_stack
 #define CONF_lazy_stack 0
