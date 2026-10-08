@@ -36,13 +36,31 @@ inline bool is_midr(uint32_t to_check) { return midr_read() == to_check; }
 // SMCCC vendor hypervisor UID (function 0x8600FF01); KVM's UUID comes from
 // Linux arch/arm64/kvm/hypercalls.c.
 inline bool is_kvm_guest() {
-  register uint64_t x0 asm("x0") = 0x8600FF01ull;
-  register uint64_t x1 asm("x1");
-  register uint64_t x2 asm("x2");
-  register uint64_t x3 asm("x3");
-  asm volatile("hvc #0" : "+r"(x0), "=r"(x1), "=r"(x2), "=r"(x3));
-  return x0 == 0xb66fb428ull && x1 == 0xe911c52eull &&
-         x2 == 0x564bcaa9ull && x3 == 0x743a004dull;
+  static const bool kvm = [] {
+    // HVC only where firmware answers it: the PSCI conduit from the ACPI FADT
+    // ARM boot flags, as in arch/aarch64/psci.cc (Arm ARM DDI 0487, HVC). KVM
+    // always uses HVC.
+    uint16_t flags = acpi::arm_boot_flags();
+    if (!(flags & acpi::FADT_ARM_PSCI_COMPLIANT) ||
+        !(flags & acpi::FADT_ARM_PSCI_USE_HVC))
+      return false;
+    register uint64_t x0 asm("x0") = 0x8600FF01ull;
+    register uint64_t x1 asm("x1");
+    register uint64_t x2 asm("x2");
+    register uint64_t x3 asm("x3");
+    // Fast SMC32/HVC32 call: the UID comes back in W0..W3; under SMCCC v1.0
+    // the callee may corrupt X4..X17 (Arm DEN 0028).
+    asm volatile("hvc #0"
+                 : "+r"(x0), "=r"(x1), "=r"(x2), "=r"(x3)
+                 :
+                 : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12",
+                   "x13", "x14", "x15", "x16", "x17", "memory");
+    return static_cast<uint32_t>(x0) == 0xb66fb428u &&
+           static_cast<uint32_t>(x1) == 0xe911c52eu &&
+           static_cast<uint32_t>(x2) == 0x564bcaa9u &&
+           static_cast<uint32_t>(x3) == 0x743a004du;
+  }();
+  return kvm;
 }
 
 inline uint64_t pmceid0_read() {
