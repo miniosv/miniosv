@@ -192,12 +192,16 @@ struct PMCSelectCore : PMCSelect {
                 << act_ctrs << " are available.\n Assuming the first "
                 << act_ctrs << " counters to be valid." << std::endl;
       erase_last_n_of_x(exp_ctrs - act_ctrs, PMClass::CORE);
-    } else if (is_midr(midr_neoverse_v1) && is_kvm_guest()) {
+    }
+    // Independent of the trimming above: a VM with sliced counters can run on
+    // a Neoverse V1 as well.
+    if (is_midr(midr_neoverse_v1) && is_kvm_guest() &&
+        erase_counter(0, 0, PMClass::CORE)) {
       std::cout << "Detected ARM Neoverse V1 under KVM: disabling counter 0 "
                    "since it doesn't work reliably in this configuration. "
                    "You have "
-                << act_ctrs - 1 << " counters available" << std::endl;
-      erase_counter(0, 0, PMClass::CORE);
+                << size_of_x(PMClass::CORE) << " counters available"
+                << std::endl;
     }
   }
 };
