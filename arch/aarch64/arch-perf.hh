@@ -14,6 +14,7 @@
 namespace perf {
 
 inline constexpr uint32_t midr_fixed_mask = 0xFF0F'FFF0u;
+// TODO: Created by @Meandres, currently unused.
 inline constexpr uint32_t midr_cortex_a76 = 0x410F'D0B0u;
 inline constexpr uint32_t midr_cortex_a55 = 0x410F'D050u;
 
