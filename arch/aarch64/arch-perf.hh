@@ -176,8 +176,13 @@ inline bool pmc_start_with_conf(uint32_t counter, uint32_t evt_sel,
   case 5: asm volatile("msr pmevtyper5_el0, %0" : : "r"(value)); break;
     // clang-format on
   case (1u << 31):
-    asm volatile("msr pmcntenset_el0, %0\n\t"
-                 "isb" ::"r"((uint64_t)(1u << 31))
+    // The cycle counter needs special handling
+    // (Arm ARM DDI 0487, PMCCFILTR_EL0).
+    asm volatile("msr pmccfiltr_el0, %0\n\t"
+                 "isb\n\t"
+                 "msr pmcntenset_el0, %1\n\t"
+                 "isb" ::"r"(value & ~0xFFFFull),
+                 "r"((uint64_t)(1u << 31))
                  : "memory");
     return true;
   }
