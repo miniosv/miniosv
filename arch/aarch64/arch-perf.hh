@@ -401,26 +401,29 @@ constexpr PMCEvent REMOTE_ACCESS = {0x31, CORE, "remote-accesses"};
 constexpr PMCEvent DTLB_WALK = {0x34, CORE, "dtlb-walks"};
 // Instruction TLB access with at least one translation table walk
 constexpr PMCEvent ITLB_WALK = {0x35, CORE, "itlb-walks"};
-// Last level data cache read
+// Last level data cache read (LL_CACHE_RD): reads only, not writes
 constexpr PMCEvent LL_CACHE = {0x36, CORE, "ll-cache-accesses"};
-// Last level data cache read miss
+// Last level data cache read miss (LL_CACHE_MISS_RD): read misses only
 constexpr PMCEvent LL_CACHE_MISS = {0x37, CORE, "ll-cache-misses"};
-// Level 1 data cache read miss
+// Level 1 data cache long-latency read miss (L1D_CACHE_LMISS_RD): only read
+// misses, and only those that incur additional latency. All L1D refills are
+// L1D_CACHE_REFILL.
 constexpr PMCEvent L1D_CACHE_MISS = {0x39, CORE, "l1d-cache-misses"};
 // Operation retired
 constexpr PMCEvent OP_COMPLETE = {0x3A, CORE, "micro-operations-retired"};
 // Operation speculated
 constexpr PMCEvent OP_SPEC = {0x3B, CORE, "micro-operations-speculated"};
 // No operation sent for execution
-constexpr PMCEvent STALL = {0x3C, CORE, ""};
+constexpr PMCEvent STALL = {0x3C, CORE, "stalls"};
 // No operation sent for execution on a slot because of the backend
-constexpr PMCEvent STALL_OP_BACKEND = {0x3D, CORE, ""};
+constexpr PMCEvent STALL_OP_BACKEND = {0x3D, CORE, "backend-slot-stalls"};
 // No operation sent for execution on a slot because of the frontend
-constexpr PMCEvent STALL_OP_FRONTEND = {0x3E, CORE, ""};
+constexpr PMCEvent STALL_OP_FRONTEND = {0x3E, CORE, "frontend-slot-stalls"};
 // No operation sent for execution on a slot
-constexpr PMCEvent STALL_OP = {0x3F, CORE, ""};
+constexpr PMCEvent STALL_OP = {0x3F, CORE, "slot-stalls"};
 
-// Level 2 data cache long-latency read miss (Armv8.4/Armv9 0x40xx range).
+// Level 2 data cache long-latency read miss (Armv8.4/Armv9 0x40xx range):
+// refills from reads that incurred additional latency, not every L2 miss.
 constexpr PMCEvent L2D_CACHE_LMISS_RD = {0x4009, CORE, "l2d-cache-misses"};
 
 inline const PMCEvent L2D_CACHE_MISS =
