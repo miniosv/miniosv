@@ -118,6 +118,9 @@ struct PMCOverflowAck {
   uint64_t mask;
 };
 
+// The interrupt enable is bit 20 of the event select, which pmc_stop() clears.
+inline void pmc_overflow_disable(PMCOverflowAck) {}
+
 inline uint64_t pmu_overflow_status() { return 0; }
 inline uint64_t pmc_overflow_bit(uint32_t) { return 0; }
 inline void pmc_ack_overflow_mask(uint64_t, PMCIntHandle) {}

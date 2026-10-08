@@ -517,6 +517,7 @@ struct PerfSampler {
     });
     if (!pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
                               pmc_period_value(pmc->perfCtr, period))) {
+      pmc_overflow_disable(ack);
       pmc_detach_overflow_handler(vector);
       pmcs.release(pmc);
       pmc = nullptr;
@@ -529,6 +530,7 @@ struct PerfSampler {
     if (!pmc)
       return;
     pmc->stop();
+    pmc_overflow_disable(ack);
     pmc_detach_overflow_handler(vector);
     pmcs.release(pmc);
     pmc = nullptr;

@@ -229,6 +229,21 @@ inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t counter) {
   return {bit};
 }
 
+inline void pmc_overflow_disable(PMCOverflowAck ack) {
+  // ack.mask is the counter's bit from pmc_overflow_ack_conf(). Both registers
+  // take one bit per counter (bit 31 = cycle counter); a 1 acts on that
+  // counter only, zeros leave the other counters unchanged.
+  //  - PMINTENCLR_EL1: the counter no longer requests the overflow interrupt.
+  //  - PMOVSCLR_EL0: clears its overflow flag, so an overflow that already
+  //    happened does not keep the level-triggered PMU interrupt asserted.
+  //  - ISB: both take effect before the caller detaches the handler.
+  // (Arm ARM DDI 0487, PMINTENCLR_EL1, PMOVSCLR_EL0)
+  asm volatile("msr pmintenclr_el1, %0\n\t"
+               "msr pmovsclr_el0, %0\n\t"
+               "isb" ::"r"(ack.mask)
+               : "memory");
+}
+
 inline void pmc_ack_overflow(PMCOverflowAck ack, PMCIntHandle) {
   asm volatile("msr pmovsclr_el0, %0\n\tisb" ::"r"(ack.mask) : "memory");
 }
@@ -295,10 +310,8 @@ inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
                            std::move(handler));
 }
 
-inline void pmc_detach_overflow_handler(PMCIntHandle irq) {
-  asm volatile("msr pmintenclr_el1, %0\n\tisb" ::"r"(~0ull) : "memory");
-  delete irq;
-}
+// Leaves the counters' interrupt enables alone, see pmc_overflow_disable().
+inline void pmc_detach_overflow_handler(PMCIntHandle irq) { delete irq; }
 
 namespace PERF_COUNT_HW {
 using enum PMClass;
