@@ -291,7 +291,7 @@ struct Event {
       return;
     pollCounter();
     after = pmc->read();
-    if (after < last)
+    if (width < 64 && after < last)
       polled += 1ull << width;
     pmc->stop();
     wraps = pmc->wraps.load(std::memory_order_relaxed) - wraps_before;
@@ -310,7 +310,8 @@ struct Event {
     // Overflows come from the interrupt where KVM delivers it and from polling
     // otherwise; the two are alternatives, so taking the larger picks whichever
     // was actually working.
-    uint64_t overflowed = std::max(polled, wraps << width);
+    // A 64-bit counter does not wrap; shifting by 64 would be undefined.
+    uint64_t overflowed = width < 64 ? std::max(polled, wraps << width) : 0;
     return overflowed + after - before;
   }
 
