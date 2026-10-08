@@ -155,6 +155,12 @@ inline void pmc_write_counter(uint32_t counter, uint64_t value) {
 
 inline bool pmc_start_with_conf(uint32_t counter, uint32_t evt_sel,
                                 uint64_t value) {
+  // Only event counters 0..5 and the cycle counter are wired up below. PMUv3
+  // has up to 31 event counters (PMCR_EL0.N); counters 6..30 would need the
+  // PMSELR_EL0 + PMXEVTYPER_EL0 / PMXEVCNTR_EL0 indirection (Arm ARM DDI 0487).
+  // Until then they are refused instead of counting a stale event type.
+  if (evt_sel > 5 && evt_sel != (1u << 31))
+    return false;
   // PMEVTYPER<n>_EL0.evtCount is bits [15:0]; the rest are exception filters.
   if (!is_event_supported(value & 0xFFFF))
     return false;
@@ -181,8 +187,10 @@ inline bool pmc_start_with_conf(uint32_t counter, uint32_t evt_sel,
   return true;
 }
 
+// Counters without a case below (event counters >= 6, see
+// pmc_start_with_conf()) read as 0.
 inline uint64_t pmc_read(uint32_t counter) {
-  uint64_t value;
+  uint64_t value = 0;
   switch (counter) {
     // clang-format off
   case 0: asm volatile("mrs %0, pmevcntr0_el0" : "=r"(value)); break;
