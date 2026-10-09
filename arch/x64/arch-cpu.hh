@@ -184,6 +184,13 @@ inline void arch_cpu::init_on_cpu()
             bits |= xcr0_avx;
         }
         write_xcr(xcr0, bits);
+        if (features().avx && features().avx512f) {
+            write_xcr(xcr0, bits | xcr0_avx512);
+            // Doesn't fit in fpu_state: undo.
+            if (xsave_size() > sizeof(fpu_state)) {
+                write_xcr(xcr0, bits);
+            }
+        }
     }
 
     // We can't trust the FPU and the MXCSR to be always initialized to default values.

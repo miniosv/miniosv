@@ -151,7 +151,7 @@ conf_fs_max_file_descriptors=0x4000
 # --- threads / stacks ------------------------------------------------------
 conf_threads_default_kernel_stack_size=65536
 conf_threads_default_pthread_stack_size=0x100000
-conf_interrupt_stack_size=0x1000
+conf_interrupt_stack_size=0x2000
 
 # --- device drivers --------------------------------------------------------
 conf_drivers_acpi=1
