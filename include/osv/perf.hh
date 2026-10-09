@@ -18,6 +18,11 @@
 #include <utility>
 #include <vector>
 
+#include <mutex>
+
+#include <osv/migration-lock.hh>
+#include <osv/sched.hh>
+
 namespace perf {
 
 // Class of PMC. ARM has a dedicated cycle counter register; x86 only has CORE.
@@ -54,6 +59,9 @@ struct PMC {
   PMClass pmClass;
   // True when the counter is available for reservation.
   mutable std::atomic<bool> free{true};
+  // Times this counter has overflowed since wrap counting was enabled. Only
+  // meaningful when the selection is counting wraps; see enable_wrap_counting.
+  mutable std::atomic<uint64_t> wraps{0};
 
   PMC(uint32_t perfEvtSel, uint32_t perfCtr, PMClass pmClass)
       : perfEvtSel(perfEvtSel), perfCtr(perfCtr), pmClass(pmClass) {}
@@ -73,16 +81,20 @@ struct PMC {
 
   uint64_t read() const { return pmc_read(perfCtr); }
 
-  void start_with_conf(uint64_t value, uint64_t initial = 0) {
+  bool start_with_conf(uint64_t value, uint64_t initial = 0) {
     pmc_write_counter(perfCtr, initial);
-    pmc_start_with_conf(perfCtr, perfEvtSel, value);
+    return pmc_start_with_conf(perfCtr, perfEvtSel, value);
   }
 
   void stop() { pmc_stop(perfEvtSel); }
 };
 
+// A set of counters to reserve from. The hardware counters are per cpu, so a
+// PMCSelect describes the counters of one cpu; PerCpuPMCSelect below picks the
+// calling cpu's one.
 struct PMCSelect {
   explicit PMCSelect(std::vector<PMC> pmcs) : pmcs(std::move(pmcs)) {}
+  virtual ~PMCSelect() = default;
 
   bool erase_counter(uint32_t perfEvtSel, uint32_t perfCtr, PMClass pmClass) {
     auto it = std::find_if(pmcs.begin(), pmcs.end(), [&](const auto &pmc) {
@@ -109,7 +121,7 @@ struct PMCSelect {
 
   // Try to reserve any free PMC of the given class. Retries a bounded number
   // of times to tolerate transient contention with another thread.
-  PMC *acquire(PMClass cls) {
+  virtual PMC *acquire(PMClass cls) {
     constexpr int max_retries = 7;
     for (int attempt = 0; attempt < max_retries; ++attempt) {
       for (auto &pmc : pmcs) {
@@ -122,11 +134,59 @@ struct PMCSelect {
     return nullptr;
   }
 
-  void release(PMC *pmc) { pmc->free.store(true); }
+  virtual void release(PMC *pmc) { pmc->free.store(true); }
 
-  size_t size() const { return pmcs.size(); }
+  // The counter is one of this selection's.
+  bool owns(const PMC *pmc) const {
+    return !pmcs.empty() && pmc >= pmcs.data() &&
+           pmc < pmcs.data() + pmcs.size();
+  }
 
-  size_t size_of_x(PMClass x) const {
+  // Software-extend the hardware counters to 64 bits. 
+  // An Armv8 PMU without FEAT_PMUv3p5 has 32-bit event counters, which wrap after 
+  // a couple of seconds of any event that tracks the clock.
+  //
+  // The PMU is per-cpu and so is this handler: call it on the cpu whose
+  // counters this selection describes. Attaching from that cpu also enables
+  // the PMU interrupt there (it is a per-cpu PPI on aarch64). Handlers are
+  // registered per interrupt id for all cpus, so the handler ignores the
+  // other cpus' interrupts. The totals are only right if the measured thread
+  // stays on one cpu.
+  virtual bool enable_wrap_counting() {
+    if (wrap_irq)
+      return true;
+    if (pmc_overflow_width(0) > 32)
+      return false; // the hardware already counts wide enough
+    unsigned cpu = sched::cpu::current()->id;
+    uint64_t own = 0;
+    for (const auto &pmc : pmcs)
+      own |= pmc_overflow_bit(pmc.perfCtr);
+    wrap_irq = pmc_attach_overflow_handler([this, cpu, own] {
+      if (sched::cpu::current()->id != cpu)
+        return; // another cpu's PMU, counted by its own selection
+      uint64_t status = pmu_overflow_status() & own;
+      for (auto &pmc : pmcs) {
+        if (status & pmc_overflow_bit(pmc.perfCtr))
+          pmc.wraps.fetch_add(1, std::memory_order_relaxed);
+      }
+      pmc_ack_overflow_mask(status, wrap_irq);
+    });
+    counting_wraps = true;
+    return true;
+  }
+
+  virtual bool counts_wraps() const { return counting_wraps; }
+
+  // Arm the overflow interrupt for one counter. Called as the counter starts,
+  // because enabling it earlier would count wraps nobody is measuring.
+  virtual void arm_wrap_counting(PMC *pmc) {
+    if (counting_wraps)
+      pmc_overflow_ack_conf(pmc->perfCtr);
+  }
+
+  virtual size_t size() const { return pmcs.size(); }
+
+  virtual size_t size_of_x(PMClass x) const {
     size_t n = 0;
     for (const auto &pmc : pmcs)
       if (pmc.pmClass == x)
@@ -136,6 +196,10 @@ struct PMCSelect {
 
 protected:
   std::vector<PMC> pmcs;
+
+private:
+  PMCIntHandle wrap_irq{};
+  bool counting_wraps = false;
 };
 
 // Core-local counter selection. Adjusts the counter count at runtime because
@@ -153,12 +217,16 @@ struct PMCSelectCore : PMCSelect {
                 << act_ctrs << " are available.\n Assuming the first "
                 << act_ctrs << " counters to be valid." << std::endl;
       erase_last_n_of_x(exp_ctrs - act_ctrs, PMClass::CORE);
-    } else if (is_midr(midr_neoverse_v1) && is_kvm_guest()) {
+    }
+    // Independent of the trimming above: a VM with sliced counters can run on
+    // a Neoverse V1 as well.
+    if (is_midr(midr_neoverse_v1) && is_kvm_guest() &&
+        erase_counter(0, 0, PMClass::CORE)) {
       std::cout << "Detected ARM Neoverse V1 under KVM: disabling counter 0 "
                    "since it doesn't work reliably in this configuration. "
                    "You have "
-                << act_ctrs - 1 << " counters available" << std::endl;
-      erase_counter(0, 0, PMClass::CORE);
+                << size_of_x(PMClass::CORE) << " counters available"
+                << std::endl;
     }
   }
 };
@@ -190,6 +258,76 @@ inline std::vector<PMC> make_default_core_pmcs() {
   return pmcs;
 }
 
+// The counters of the calling cpu. Every cpu has its own PMU, so every cpu
+// gets its own reservation table (a PMCSelectCore), created on that cpu the
+// first time it is used there: it reads that cpu's PMU (core types can differ,
+// e.g. Cortex-A76 + A55). Reserving on one cpu does not take counters from
+// another; two users on the same cpu share its table and cannot program the
+// same counter twice.
+//
+// acquire() reserves on the calling cpu, release() returns a counter to the
+// table it came from. With pinned threads each thread reserves on its own cpu.
+struct PerCpuPMCSelect : PMCSelect {
+  PerCpuPMCSelect() : PMCSelect({}), selections(sched::cpus.size()) {}
+
+  PMC *acquire(PMClass cls) override { return local().acquire(cls); }
+
+  void release(PMC *pmc) override {
+    if (PMCSelect *owner = owner_of(pmc))
+      owner->release(pmc);
+  }
+
+  bool enable_wrap_counting() override {
+    return local().enable_wrap_counting();
+  }
+
+  bool counts_wraps() const override { return local().counts_wraps(); }
+
+  void arm_wrap_counting(PMC *pmc) override {
+    if (PMCSelect *owner = owner_of(pmc))
+      owner->arm_wrap_counting(pmc);
+  }
+
+  size_t size() const override { return local().size(); }
+
+  size_t size_of_x(PMClass x) const override { return local().size_of_x(x); }
+
+private:
+  // The calling cpu's table, created on first use. migration_lock keeps the
+  // thread on the cpu it read its id from while the table reads that PMU.
+  PMCSelectCore &local() const {
+    std::lock_guard<migration_lock_t> stay(migration_lock);
+    auto &slot = selections[sched::cpu::current()->id];
+    PMCSelectCore *selection = slot.load(std::memory_order_acquire);
+    if (selection)
+      return *selection;
+    auto *created = new PMCSelectCore(make_default_core_pmcs());
+    if (slot.compare_exchange_strong(selection, created,
+                                     std::memory_order_acq_rel))
+      return *created;
+    delete created; // another thread on this cpu was faster
+    return *selection;
+  }
+
+  PMCSelect *owner_of(const PMC *pmc) const {
+    for (auto &slot : selections) {
+      PMCSelectCore *selection = slot.load(std::memory_order_acquire);
+      if (selection && selection->owns(pmc))
+        return selection;
+    }
+    return nullptr;
+  }
+
+  // One table per cpu; never freed (the wrap counting handlers refer to them).
+  mutable std::vector<std::atomic<PMCSelectCore *>> selections;
+};
+
+// The machine-wide default: the calling cpu's counters, see PerCpuPMCSelect.
+inline PMCSelect &default_core_pmcs() {
+  static PerCpuPMCSelect selection;
+  return selection;
+}
+
 // ---------------- High-level measurement API ----------------
 
 struct Event {
@@ -212,33 +350,78 @@ struct Event {
       valid = false;
       return;
     }
-    pmc->start_with_conf(pmce.bitmap);
-    before = pmc->read();
+    wraps_before = pmc->wraps.load(std::memory_order_relaxed);
+    pmcs.arm_wrap_counting(pmc);
+    width = pmc_overflow_width(pmc->perfCtr);
+    polled = 0;
+    if (!pmc->start_with_conf(pmce.bitmap)) {
+      // The event is not implemented here; the counter stays disabled and
+      // would otherwise report a plausible-looking zero.
+      pmcs.release(pmc);
+      pmc = nullptr;
+      valid = false;
+      return;
+    }
+    before = last = pmc->read();
+  }
+
+  // Read the counter and fold in an overflow if it has gone backwards. 
+  // Cheap enough to call from a timer (one system-register read per counter).
+  // Must be called more often than the counter can wrap.
+  void pollCounter() {
+    if (!pmc || width >= 64)
+      return;
+    uint64_t now = pmc->read();
+    if (now < last)
+      polled += 1ull << width;
+    last = now;
   }
 
   void stop() {
     if (!pmc)
       return;
+    pollCounter();
     after = pmc->read();
+    if (width < 64 && after < last)
+      polled += 1ull << width;
     pmc->stop();
+    wraps = pmc->wraps.load(std::memory_order_relaxed) - wraps_before;
+    counted_wraps = pmcs.counts_wraps();
     pmcs.release(pmc);
+    // With the overflows added back a counter only ever counts up, so this is
+    // not one: it is a read of a different cpu's PMU, or of a counter that was
+    // never enabled.
+    if (!counted_wraps && !polled && after < before)
+      valid = false;
   }
 
-  uint64_t report() const { return valid ? after - before : 0; }
+  uint64_t report() const {
+    if (!valid)
+      return 0;
+    // Overflows come from the interrupt where KVM delivers it and from polling
+    // otherwise; the two are alternatives, so taking the larger picks whichever
+    // was actually working.
+    // A 64-bit counter does not wrap; shifting by 64 would be undefined.
+    uint64_t overflowed = width < 64 ? std::max(polled, wraps << width) : 0;
+    return overflowed + after - before;
+  }
 
 private:
   PMCSelect &pmcs;
   PMC *pmc = nullptr;
+  uint64_t wraps_before = 0;
+  uint64_t wraps = 0;
+  uint64_t last = 0;
+  uint64_t polled = 0;
+  uint32_t width = 64;
+  bool counted_wraps = false;
 };
 
 struct PerfEvent {
-private:
-  // Owned when no external selection is supplied. Sharing a PMCSelect between
-  // PerfEvents lets multiple collections coordinate uncore counters.
-  PMCSelectCore default_pmcs{make_default_core_pmcs()};
-
-public:
-  PMCSelect &pmcs = default_pmcs;
+  // The machine-wide selection unless an external one is supplied. Sharing a
+  // PMCSelect between PerfEvents lets multiple collections coordinate uncore
+  // counters.
+  PMCSelect &pmcs = default_core_pmcs();
   // Must not exceed the number of hardware counters in `pmcs`.
   std::vector<Event> events;
 
@@ -272,9 +455,16 @@ public:
   }
 
   void startCounters() {
+    pmcs.enable_wrap_counting();
     for (auto &event : events)
       event.start();
     startTime = std::chrono::steady_clock::now();
+  }
+
+  // Fold in any counter that has overflowed since the last call.
+  void pollCounters() {
+    for (auto &event : events)
+      event.pollCounter();
   }
 
   void stopCounters() {
@@ -412,8 +602,14 @@ struct PerfSampler {
       pmc_ack_overflow(ack, vector);
       handler(current_interrupt_frame);
     });
-    pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
-                         pmc_period_value(pmc->perfCtr, period));
+    if (!pmc->start_with_conf(pmce.bitmap | pmc_int_enable,
+                              pmc_period_value(pmc->perfCtr, period))) {
+      pmc_overflow_disable(ack);
+      pmc_detach_overflow_handler(vector);
+      pmcs.release(pmc);
+      pmc = nullptr;
+      return false;
+    }
     return true;
   }
 
@@ -421,13 +617,14 @@ struct PerfSampler {
     if (!pmc)
       return;
     pmc->stop();
+    pmc_overflow_disable(ack);
     pmc_detach_overflow_handler(vector);
     pmcs.release(pmc);
     pmc = nullptr;
   }
 
 private:
-  PMCSelectCore pmcs{make_default_core_pmcs()};
+  PMCSelect &pmcs = default_core_pmcs();
   uint64_t period;
   std::function<void(exception_frame *)> handler;
   PMCEvent pmce;
