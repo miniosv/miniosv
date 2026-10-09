@@ -8,10 +8,13 @@
 #ifndef EXECINFO_HH_
 #define EXECINFO_HH_
 
-// Similar to backtrace(), but works even with a corrupted stack.  Uses
-// frame pointers instead of DWARF debug information, so it works in interrupt
-// contexts, but requires -fno-omit-frame-pointer
-int backtrace_safe(void** pc, int nr);
-
+namespace osv {
+  // walks DWARF via compiler's _Unwind_Backtrace, fills `pc` with up to 
+  // `nr` return addresses, starting at the direct caller
+  // returns how many it wrote
+  // [note] if `cfa` is non-null it also receives a canoncial frame address of
+  // frame (useful for recursion, stack overflow)
+  int unwind(void** pc, unsigned long* cfa, int nr); 
+}
 
 #endif /* EXECINFO_HH_ */
