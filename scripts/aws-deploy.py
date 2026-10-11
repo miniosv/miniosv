@@ -177,6 +177,36 @@ def stream_console(ec2_client, instance_id, poll_interval=5):
         time.sleep(poll_interval)
 
 
+def launch(ec2_client, run_kwargs: dict, market: str) -> tuple[dict, str]:
+    """run_instances, on the market asked for; returns the market used. Spot
+    is a one-time request at the default max price (the on-demand rate),
+    terminated if reclaimed; a bench run is minutes and a c6in.16xlarge costs
+    about a tenth that way. "spot" fails if refused: a run that asked for spot
+    and got on-demand would be billed at ten times what was expected.
+    "spot-or-on-demand" prints the refusal and retries on-demand."""
+    if market == "on-demand":
+        return ec2_client.run_instances(**run_kwargs), "on-demand"
+    kwargs = dict(
+        run_kwargs,
+        InstanceMarketOptions={
+            "MarketType": "spot",
+            "SpotOptions": {
+                "SpotInstanceType": "one-time",
+                "InstanceInterruptionBehavior": "terminate",
+            },
+        },
+    )
+    try:
+        return ec2_client.run_instances(**kwargs), "spot"
+    except ClientError as e:
+        err = e.response.get("Error", {})
+        if market != "spot-or-on-demand":
+            raise SystemExit(f"spot requested but not provided: {err.get('Code')}: "
+                             f"{err.get('Message')}") from e
+        print(f"Spot not provided ({err.get('Code')}); falling back to on-demand")
+        return ec2_client.run_instances(**run_kwargs), "on-demand"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("region", help="AWS region to deploy to (e.g. us-east-1)")
@@ -186,6 +216,8 @@ def main():
     parser.add_argument("--attach", action="store_true", help="Stream system log and terminate instance on Ctrl+C")
     parser.add_argument("--subnet", default=None, metavar="ID",
                         help="Subnet to launch into (default: the VPC's default)")
+    parser.add_argument("--market", choices=("on-demand", "spot", "spot-or-on-demand"), default="spot-or-on-demand",
+                        help="Launch market; 'spot' fails if spot cannot be provided, 'spot-or-on-demand' falls back")
     args = parser.parse_args()
 
     aws_login()
@@ -325,10 +357,15 @@ def main():
     )
     if args.subnet:
         run_kwargs["SubnetId"] = args.subnet
-    run_response = ec2_client.run_instances(**run_kwargs)
+    try:
+        run_response, market = launch(ec2_client, run_kwargs, args.market)
+    except (SystemExit, ClientError):
+        # Nothing is running yet, but the AMI and snapshot already exist.
+        cleanup_aws_resources(ec2_client, ami_id=ami_id, snapshot_id=snapshot_id)
+        raise
 
     instance_id = run_response["Instances"][0]["InstanceId"]
-    print(f"Launched instance: {instance_id}")
+    print(f"Launched instance: {instance_id} ({market})")
 
     with open("aws/.instance-id", "w") as f:
         f.write(instance_id)
@@ -340,7 +377,8 @@ def main():
     inst = desc["Reservations"][0]["Instances"][0]
     public_dns = inst.get("PublicDnsName") or "(none)"
     public_ip = inst.get("PublicIpAddress") or "(none)"
-    print(f"Instance running: {instance_id} ({instance})")
+    # The bench drivers parse this line: the id, and the market it came from.
+    print(f"Instance running: {instance_id} ({instance}, {market})")
     print(f"  Public DNS: {public_dns}")
     print(f"  Public IP:  {public_ip}")
 
