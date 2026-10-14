@@ -12,15 +12,17 @@
 #   - os-libc      : C libc surface conformance checks (string/stdlib/math/...)
 #   - os-iostream  : C++ iostreams / localization checks (std::cout etc.)
 #   - os-memmove   : memmove() overlap-correctness regression test
+#   - os-string    : memcmp() correctness + throughput
 #   - os-memory    : the memory clients: early and the heap, plus malloc/mmap
 #   - os-memory-primitives : vspace, frames and mapping, one header per function
 #   - os-stress    : concurrency / allocator / TLS stress tests
 
-app-objects =  test/osv_tests.o
-app-objects += test/os-features.o
-app-objects += test/os-libc.o
-app-objects += test/os-iostream.o
-app-objects += test/os-memmove.o
-app-objects += test/os-memory.o
-app-objects += test/os-memory-primitives.o
-app-objects += test/os-stress.o
+app-objects = tests/osv_tests.o
+app-objects += tests/os-features.o
+app-objects += tests/os-libc.o
+app-objects += tests/os-iostream.o
+app-objects += tests/os-memmove.o
+app-objects += tests/os-string.o
+app-objects += tests/os-memory.o
+app-objects += tests/os-memory-primitives.o
+app-objects += tests/os-stress.o

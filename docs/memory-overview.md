@@ -33,7 +33,7 @@ that want to precisely manage their memory minimal and predictable primitives.
 ```
 
 Each layer is described in [memory-primitives.md](memory-primitives.md).
-The tests live in `test/os-memory-primitives.cc` and `test/os-memory.cc`.
+The tests live in `tests/os-memory-primitives.cc` and `tests/os-memory.cc`.
 
 ## Address space
 

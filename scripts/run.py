@@ -13,6 +13,9 @@
 # OVMF_CODE/OVMF_VARS (x86_64) or AAVMF_CODE/AAVMF_VARS (aarch64) env vars.
 #
 # Console keys: Ctrl-A C opens the QEMU monitor, Ctrl-A X quits.
+#
+# Under KVM each vCPU thread is pinned to its own host CPU (vCPU i on host CPU
+# i by default; pick the CPUs with --pin, or opt out with --no-pin).
 
 import subprocess
 import sys
@@ -21,6 +24,8 @@ import os
 import errno
 import shutil
 import tempfile
+import time
+import re
 
 devnull = open('/dev/null', 'w')
 
@@ -107,6 +112,95 @@ def setup_pflash(arch, code, vars_, pflash_dir, workdir):
                 fh.truncate(64 * 1024 * 1024)
     return code_copy, vars_copy
 
+def parse_cpu_list(spec):
+    "Parse a CPU list like '0-4,8,10-11' into a list, keeping the given order."
+    cpus = []
+    for part in spec.split(','):
+        part = part.strip()
+        m = re.fullmatch(r'(\d+)(?:-(\d+))?', part)
+        if not m:
+            raise ValueError("bad CPU list element '%s'" % part)
+        lo = int(m.group(1))
+        hi = int(m.group(2)) if m.group(2) is not None else lo
+        if hi < lo:
+            raise ValueError("bad CPU range '%s'" % part)
+        cpus += range(lo, hi + 1)
+    if len(set(cpus)) != len(cpus):
+        raise ValueError("CPU list '%s' names a CPU twice" % spec)
+    return cpus
+
+def choose_pinning(options):
+    "Return the host CPU list for the vCPUs (vCPU i -> list[i]), or None."
+    if options.no_pin:
+        return None
+    nvcpus = int(options.vcpus)
+    allowed = os.sched_getaffinity(0)
+    if options.hypervisor != 'kvm':
+        if options.pin:
+            print("run.py: --pin ignored: vCPU pinning needs KVM", file=sys.stderr)
+        return None
+    if options.pin:
+        try:
+            cpus = parse_cpu_list(options.pin)
+        except ValueError as e:
+            sys.exit("run.py: --pin: %s" % e)
+        if len(cpus) < nvcpus:
+            sys.exit("run.py: --pin lists %d host CPUs for %d vcpus"
+                     % (len(cpus), nvcpus))
+        bad = [c for c in cpus[:nvcpus] if c not in allowed]
+        if bad:
+            sys.exit("run.py: --pin: host CPU(s) %s not available to this process"
+                     % bad)
+        return cpus[:nvcpus]
+    cpus = list(range(nvcpus))
+    if any(c not in allowed for c in cpus):
+        print("run.py: not pinning: host CPUs 0-%d are not all available; "
+              "use --pin" % (nvcpus - 1), file=sys.stderr)
+        return None
+    return cpus
+
+def pin_vcpus(proc, cpus, timeout=10.0):
+    """Pin QEMU's vCPU thread n to host CPU cpus[n].
+
+    The thread ids only exist once QEMU has created its vCPUs, so poll
+    /proc/<pid>/task/*/comm (named 'CPU <n>/KVM' by debug-threads=on) until
+    all are found, QEMU exits, or the timeout passes."""
+    pinned = {}
+    deadline = time.monotonic() + timeout
+    while len(pinned) < len(cpus) and time.monotonic() < deadline:
+        if proc.poll() is not None:
+            break
+        try:
+            tids = os.listdir('/proc/%d/task' % proc.pid)
+        except OSError:
+            break
+        for tid in tids:
+            try:
+                with open('/proc/%d/task/%s/comm' % (proc.pid, tid)) as f:
+                    m = re.fullmatch(r'CPU (\d+)/KVM', f.read().strip())
+            except OSError:
+                continue
+            if not m:
+                continue
+            n = int(m.group(1))
+            if n in pinned or n >= len(cpus):
+                continue
+            try:
+                os.sched_setaffinity(int(tid), {cpus[n]})
+                pinned[n] = cpus[n]
+            except OSError as e:
+                print("run.py: pinning vcpu %d to host CPU %d failed: %s"
+                      % (n, cpus[n], e.strerror), file=sys.stderr, end="\r\n")
+                pinned[n] = None
+        if len(pinned) < len(cpus):
+            time.sleep(0.05)
+    done = ", ".join("%d->%d" % (n, c) for n, c in sorted(pinned.items())
+                     if c is not None)
+    missing = [n for n in range(len(cpus)) if n not in pinned]
+    # QEMU has the terminal in raw mode by now, hence the explicit \r.
+    print("run.py: pinned vcpus %s; not found: %s" % (done or "none", missing),
+          file=sys.stderr, end="\r\n")
+
 def start_osv_qemu(options):
     workdir = tempfile.mkdtemp(prefix='miniosv-run-')
     pflash_dir = os.path.dirname(os.path.abspath(options.image_file))
@@ -115,8 +209,13 @@ def start_osv_qemu(options):
         code_copy, vars_copy = setup_pflash(options.arch, code, vars_, pflash_dir, workdir)
 
         use_kvm = options.hypervisor == 'kvm'
+        pin_cpus = choose_pinning(options)
 
         args = ["-m", options.memsize, "-smp", options.vcpus, "-no-reboot"]
+
+        # Name the QEMU threads so the vCPU threads can be found and pinned.
+        if pin_cpus:
+            args += ["-name", "miniosv,debug-threads=on"]
 
         # Machine, CPU and acceleration.
         if options.arch == 'x86_64':
@@ -179,7 +278,12 @@ def start_osv_qemu(options):
 
         try:
             stty_save()
-            ret = subprocess.call(cmdline, env=os.environ.copy())
+            proc = subprocess.Popen(cmdline, env=os.environ.copy())
+            try:
+                if pin_cpus:
+                    pin_vcpus(proc, pin_cpus)
+            finally:
+                ret = proc.wait()
             if ret != 0:
                 sys.exit("qemu failed.")
         except OSError as e:
@@ -223,6 +327,11 @@ if __name__ == "__main__":
                         help="guest memory, e.g. 1G, 2G (default 2G; >=2G recommended)")
     parser.add_argument("-c", "--vcpus", action="store", default="4",
                         help="number of vcpus (default 4)")
+    parser.add_argument("--pin", action="store", metavar="HOSTCPUS",
+                        help="pin vCPU i to the i-th host CPU of this list, e.g. "
+                             "0-4,8,10-11 (default under KVM: 0-<vcpus-1>)")
+    parser.add_argument("--no-pin", action="store_true",
+                        help="leave the vCPU threads to the host scheduler")
     parser.add_argument("-p", "--hypervisor", action="store", default="auto",
                         help="acceleration: kvm, tcg, or auto (default)")
     parser.add_argument("-H", "--no-shutdown", action="store_true",
@@ -249,6 +358,8 @@ if __name__ == "__main__":
     parser.add_argument("--gic-version", action="store", default="3",
                         help="aarch64 GIC version under TCG (default 3)")
     cmdargs = parser.parse_args()
+    if cmdargs.pin and cmdargs.no_pin:
+        parser.error("--pin and --no-pin are mutually exclusive")
 
     # The build output dir is build/<mode>.<arch> (arch as x64 / aarch64), so
     # derive the image from --arch rather than the arch-ambiguous build/last.

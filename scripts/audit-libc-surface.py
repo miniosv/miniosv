@@ -65,7 +65,7 @@ for o in musl_objs:
 
 # 2. roots: external references
 ext_undefs = set()
-osv_dirs = ['core', 'libc', 'arch', 'drivers', 'bsd', 'app', 'apps', 'fastlz', 'test']
+osv_dirs = ['core', 'libc', 'arch', 'drivers', 'bsd', 'app', 'apps', 'fastlz', 'tests']
 for d in osv_dirs:
     p = os.path.join(builddir, d)
     if not os.path.isdir(p):
