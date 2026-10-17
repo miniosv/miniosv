@@ -8,13 +8,15 @@
 #include <osv/drivers_config.h>
 #include <cstring>
 
-#include <osv/mmu.hh>
 #include <osv/align.hh>
 #include <osv/debug.h>
 #include <osv/prio.hh>
 #include "processor.hh"
 
 #include "acpi.hh"
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
+#include <osv/mem/mapping.hh>
 
 #define acpi_tag "acpi"
 #define acpi_w(...)   tprintf_w(acpi_tag, __VA_ARGS__)
@@ -95,9 +97,9 @@ static void *map_phys(uint64_t pa, size_t len)
     static uint64_t mapped[16];
     static unsigned nmapped;
 
-    uint64_t base = align_down(pa, mmu::huge_page_size);
-    uint64_t end = align_up(pa + len, mmu::huge_page_size);
-    for (uint64_t p = base; p < end; p += mmu::huge_page_size) {
+    uint64_t base = align_down(pa, mem::mapping::huge_page_size);
+    uint64_t end = align_up(pa + len, mem::mapping::huge_page_size);
+    for (uint64_t p = base; p < end; p += mem::mapping::huge_page_size) {
         bool already = false;
         for (unsigned i = 0; i < nmapped; i++) {
             if (mapped[i] == p) {
@@ -106,13 +108,13 @@ static void *map_phys(uint64_t pa, size_t len)
             }
         }
         if (!already) {
-            mmu::linear_map(mmu::phys_to_virt(p), p, mmu::huge_page_size, "acpi");
+            mem::map_phys(p, mem::mapping::huge_page_size);
             if (nmapped < 16) {
                 mapped[nmapped++] = p;
             }
         }
     }
-    return mmu::phys_to_virt(pa);
+    return mem::map_phys(pa, len);
 }
 
 #ifdef __x86_64__

@@ -10,9 +10,9 @@
 #define GIC_COMMON_HH
 
 #include <osv/types.h>
-#include <osv/mmu-defs.hh>
 #include <osv/spinlock.h>
 #include <osv/irqlock.hh>
+#include <osv/mem/frames.hh>
 
 #define GIC_MAX_IRQ  1019
 #define GIC_SPI_BASE 32
@@ -96,7 +96,7 @@ enum class irq_type : unsigned int {
 /* GIC Distributor Interface */
 class gic_dist {
 protected:
-    gic_dist(mmu::phys b, size_t l);
+    gic_dist(mem::frames::phys_addr b, size_t l);
 
 public:
     u32 read_reg(gicd_reg r);
@@ -110,7 +110,7 @@ public:
     unsigned int read_number_of_interrupts();
 
 protected:
-    mmu::phys _base;
+    mem::frames::phys_addr _base;
 };
 
 /* Base class with mostly virtual functions intended to provide

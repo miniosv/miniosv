@@ -11,7 +11,6 @@
 #define ARCH_CPU_HH
 
 #include "processor.hh"
-#include "osv/pagealloc.hh"
 #include <osv/debug.h>
 #include "exceptions.hh"
 #include <osv/kernel_config.h>

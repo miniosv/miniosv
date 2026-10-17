@@ -9,7 +9,7 @@
 #define APIC_HH_
 
 #include <osv/types.h>
-#include <osv/mmu.hh>
+#include <osv/mem/frames.hh>
 
 namespace processor {
 
@@ -103,7 +103,7 @@ protected:
     virtual void software_enable();
     virtual void enable() = 0;
 
-    mmu::phys _apic_base;
+    mem::frames::phys_addr _apic_base;
 
     static constexpr unsigned APIC_SHORTHAND_SELF = 0x40000;
     static constexpr unsigned APIC_SHORTHAND_ALL =  0x80000;

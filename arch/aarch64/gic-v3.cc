@@ -46,9 +46,10 @@
 
 #include <osv/mmio.hh>
 #include <osv/sched.hh>
-#include <osv/contiguous_alloc.hh>
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
 #include <osv/ilog2.hh>
-#include <osv/mmu.hh>
+#include <osv/mem/phys.hh>
 #include <drivers/pci-function.hh>
 
 #include <algorithm>
@@ -56,6 +57,8 @@
 #include "processor.hh"
 #include "gic-v3.hh"
 #include "arm-clock.hh"
+#include <osv/mem/mapping.hh>
+#include <osv/mem/frames.hh>
 
 extern class interrupt_table idt;
 
@@ -85,22 +88,22 @@ void gic_v3_dist::enable()
     wait_for_write_complete();
 }
 
-gic_v3_redist::gic_v3_redist(const mmu::phys *bases, const size_t *lens, int count)
+gic_v3_redist::gic_v3_redist(const mem::frames::phys_addr *bases, const size_t *lens, int count)
     : _nr_regions(count)
 {
     assert(count > 0 && count <= MAX_GICR_REGIONS);
     for (int i = 0; i < count; i++) {
         _region_base[i] = bases[i];
         _region_len[i] = lens[i];
-        mmu::linear_map((void *)bases[i], bases[i], lens[i], "gic_redist",
-                        mmu::page_size, mmu::mattr::dev);
+        mem::map_phys_at((void *)bases[i], bases[i], lens[i],
+                        mem::mapping::page_size, mem::mattr::dev);
     }
 }
 
 void gic_v3_redist::init_cpu_base(int smp_idx)
 {
     if (!smp_idx) {
-        _cpu_bases = new mmu::phys[sched::cpus.size()];
+        _cpu_bases = new mem::frames::phys_addr[sched::cpus.size()];
     }
 
     uint64_t mpidr = processor::read_mpidr();
@@ -110,7 +113,7 @@ void gic_v3_redist::init_cpu_base(int smp_idx)
     // one frame (per-CPU gicr_base_address, Azure) or many frames chained by the
     // LAST bit (a discovery range, QEMU/AWS). Bound the walk by the region size.
     for (int reg = 0; reg < _nr_regions; reg++) {
-        mmu::phys base = _region_base[reg];
+        mem::frames::phys_addr base = _region_base[reg];
         u64 offset = 0;
         u64 typer;
         do {
@@ -177,7 +180,7 @@ void gic_v3_redist::wait_for_write_complete(int smp_idx)
 void gic_v3_redist::init_rdbase(int smp_idx, bool pta)
 {
     if (!smp_idx) {
-        _rdbases = new mmu::phys[sched::cpus.size()];
+        _rdbases = new mem::frames::phys_addr[sched::cpus.size()];
     }
 
     if (pta) {
@@ -200,11 +203,11 @@ static uint32_t get_cpu_affinity(void)
     return (uint32_t)aff;
 }
 
-gic_v3_its::gic_v3_its(mmu::phys b, size_t l) : _base(b)
+gic_v3_its::gic_v3_its(mem::frames::phys_addr b, size_t l) : _base(b)
 {
     if (b && l) {
-        mmu::linear_map((void *)_base, _base, l, "gic_its", mmu::page_size,
-                        mmu::mattr::dev);
+        mem::map_phys_at((void *)_base, _base, l, mem::mapping::page_size,
+                        mem::mattr::dev);
     }
 }
 
@@ -244,11 +247,11 @@ void gic_v3_its::read_type_register()
 void gic_v3_its::initialize_cmd_queue()
 {
     //Queue needs to be 64KB aligned
-    _cmd_queue = memory::alloc_phys_contiguous_aligned(GIC_ITS_CMD_QUEUE_SIZE, 0x10000);
+    _cmd_queue = mem::map_phys(mem::frames::alloc(GIC_ITS_CMD_QUEUE_SIZE, 0x10000), GIC_ITS_CMD_QUEUE_SIZE);
     memset(_cmd_queue, 0, GIC_ITS_CMD_QUEUE_SIZE);
 
-    u64 cmd_queue_pa = mmu::virt_to_phys(_cmd_queue);
-    u64 queue_size_in_pages = GIC_ITS_CMD_QUEUE_SIZE / mmu::page_size;
+    u64 cmd_queue_pa = mem::mapping::to_phys(_cmd_queue);
+    u64 queue_size_in_pages = GIC_ITS_CMD_QUEUE_SIZE / mem::mapping::page_size;
     //
     //Read https://developer.arm.com/documentation/ddi0601/2024-09/External-Registers/GITS-CBASER--ITS-Command-Queue-Descriptor
     write_reg64(gic_its_reg::GICITS_CBASER, GITS_CBASER_VALID | cmd_queue_pa | (queue_size_in_pages - 1));
@@ -347,7 +350,7 @@ void gic_v3_its::cmd_discard(u32 dev_id, int vector)
 //See 6.3.14 in GIC3/4 spec
 //"Ensures all outstanding ITS operations associated with physical interrupts for the Redistributor
 // specified by RDbase are globally observed before any further ITS commands are executed."
-void gic_v3_its::cmd_sync(mmu::phys rdbase)
+void gic_v3_its::cmd_sync(mem::frames::phys_addr rdbase)
 {
     its_cmd cmd;
     cmd.data[0] = (u64)gic_its_cmd::ITS_CMD_SYNC;
@@ -358,7 +361,7 @@ void gic_v3_its::cmd_sync(mmu::phys rdbase)
 
 //See 6.3.8 in GIC3/4 spec
 //"Maps the Collection table entry defined by ICID to the target Redistributor, defined by RDbase"
-void gic_v3_its::cmd_mapc(int smp_idx, mmu::phys rdbase)
+void gic_v3_its::cmd_mapc(int smp_idx, mem::frames::phys_addr rdbase)
 {
     its_cmd cmd;
     cmd.data[0] = (u32)gic_its_cmd::ITS_CMD_MAPC;
@@ -393,12 +396,12 @@ void gic_v3_driver::init_lpis(int smp_idx)
         _msi_vector_num = std::max(_msi_vector_num, (u16)4096);
 
         //Allocate common LPI configuration table
-        void *config_table = memory::alloc_phys_contiguous_aligned(_msi_vector_num, 4096);
+        void *config_table = mem::map_phys(mem::frames::alloc(_msi_vector_num, 4096), _msi_vector_num);
         memset(config_table, 0, _msi_vector_num);
         _lpi_config_table = (u8*)config_table;
 
         u64 id_bits = ilog2_roundup<u64>(_msi_vector_num + GIC_LPI_INTS_START) - 1;
-        _lpi_prop_base = mmu::virt_to_phys(config_table) | id_bits;
+        _lpi_prop_base = mem::mapping::to_phys(config_table) | id_bits;
 
         //Allocate LPI pending table for each redistributor
         //From https://developer.arm.com/documentation/102923/0100/Redistributors:
@@ -406,10 +409,10 @@ void gic_v3_driver::init_lpis(int smp_idx)
         _lpi_pend_bases = new u64[sched::cpus.size()];
         size_t pending_table_size = (_msi_vector_num + GIC_LPI_INTS_START) / 8;
         for (unsigned c = 0; c < sched::cpus.size(); c++) {
-            void *pending_table = memory::alloc_phys_contiguous_aligned(pending_table_size, 64 * 1024);
+            void *pending_table = mem::map_phys(mem::frames::alloc(pending_table_size, 64 * 1024), pending_table_size);
             memset(pending_table, 0, pending_table_size);
             //Read about PTZ here - https://developer.arm.com/documentation/ddi0601/2024-12/External-Registers/GICR-PENDBASER--Redistributor-LPI-Pending-Table-Base-Address-Register
-            _lpi_pend_bases[c] = mmu::virt_to_phys(pending_table) | GICR_PENDBASER_PTZ;
+            _lpi_pend_bases[c] = mem::mapping::to_phys(pending_table) | GICR_PENDBASER_PTZ;
         }
     }
 
@@ -575,10 +578,10 @@ void gic_v3_driver::init_its_device_or_collection_table(int idx)
     //    //TODO: Calculate maximum devices count and save it somewhere
     //}
 
-    void *table = memory::alloc_phys_contiguous_aligned(table_size, table_size);
+    void *table = mem::map_phys(mem::frames::alloc(table_size, table_size), table_size);
     memset(table, 0, table_size);
 
-    u64 table_pa = mmu::virt_to_phys(table);
+    u64 table_pa = mem::mapping::to_phys(table);
     base = (base & ~GITS_TABLE_BASE_PA_MASK) | table_pa;
     _gits.write_reg64_at_offset(gic_its_reg::GICITS_BASER, offset, GITS_BASER_VALID | base);
 }
@@ -608,7 +611,7 @@ void gic_v3_driver::init_its(int smp_idx)
 
     //Init on each cpu
     _gicrd.init_rdbase(smp_idx, _gits.is_typer_pta());
-    mmu::phys rdbase = _gicrd.rdbase(smp_idx);
+    mem::frames::phys_addr rdbase = _gicrd.rdbase(smp_idx);
 
     if (smp_idx == 0) {
         // Init on primary CPU
@@ -778,11 +781,11 @@ void gic_v3_driver::allocate_msi_dev_mapping(pci::function* dev)
 
     //We explicitly allocate memory below to make sure it happens
     //when interrupts are enabled
-    void *itt = memory::alloc_phys_contiguous_aligned(itt_size, 256);
+    void *itt = mem::map_phys(mem::frames::alloc(itt_size, 256), itt_size);
     memset(itt, 0, itt_size);
 
     //Register translation entry in ITS
-    u64 itt_pa = mmu::virt_to_phys(itt);
+    u64 itt_pa = mem::mapping::to_phys(itt);
     _irq_lock.lock();
     WITH_LOCK(_gic_lock) {
         _itt_by_device_id[itt_index] = std::make_pair(device_id, itt);
@@ -810,7 +813,7 @@ void gic_v3_driver::map_msi_vector(unsigned int vector, pci::function* dev, u32 
             _cpu_by_vector[index] = target_cpu + 1;
 
             //Sync redistributor
-            mmu::phys rdbase = _gicrd.rdbase(target_cpu);
+            mem::frames::phys_addr rdbase = _gicrd.rdbase(target_cpu);
             _gits.cmd_sync(rdbase);
         } else if ((vector_cpu - 1) != target_cpu) { //We need to move interrupt to different redistributor (cpu)
             //Read https://developer.arm.com/documentation/102923/0100/ITS/Migrating-interrupts-between-Redistributors
@@ -820,7 +823,7 @@ void gic_v3_driver::map_msi_vector(unsigned int vector, pci::function* dev, u32 
             _gits.cmd_inv(device_id, vector);
             //
             //Sync old redistributor
-            mmu::phys rdbase = _gicrd.rdbase(vector_cpu - 1);
+            mem::frames::phys_addr rdbase = _gicrd.rdbase(vector_cpu - 1);
             _gits.cmd_sync(rdbase);
 
             _cpu_by_vector[index] = target_cpu + 1;
@@ -842,7 +845,7 @@ void gic_v3_driver::unmap_msi_vector(unsigned int vector, pci::function* dev)
             _gits.cmd_inv(device_id, vector);
 
             //Sync redistributor
-            mmu::phys rdbase = _gicrd.rdbase(vector_cpu - 1);
+            mem::frames::phys_addr rdbase = _gicrd.rdbase(vector_cpu - 1);
             _gits.cmd_sync(rdbase);
         }
     }
