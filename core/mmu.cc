@@ -12,7 +12,6 @@
 #include "exceptions.hh"
 #include <string.h>
 #include <iterator>
-#include "libc/signal.hh"
 #include <osv/align.hh>
 #include <osv/ilog2.hh>
 #include <osv/prio.hh>
@@ -1296,7 +1295,8 @@ static void vm_sigsegv(uintptr_t addr, exception_frame* ef)
         dump_registers(ef);
         abort();
     }
-    osv::handle_mmap_fault(addr, SIGSEGV, ef);
+    debug_ll("page fault inside application, addr: 0x%016lx\n", addr); 
+    abort(); 
 }
 
 void vm_fault(uintptr_t addr, exception_frame* ef)
