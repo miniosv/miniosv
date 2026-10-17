@@ -50,6 +50,14 @@ ppi_interrupt::ppi_interrupt(gic::irq_type t, unsigned id, std::function<void ()
     idt.register_interrupt(this);
 }
 
+ppi_interrupt::ppi_interrupt(gic::irq_type t, unsigned id, std::function<bool ()> a,
+                             std::function<void ()> h)
+    : interrupt(id, a, h), irq_type(t)
+{
+    gic::gic->set_irq_type(id, t);
+    idt.register_interrupt(this);
+}
+
 ppi_interrupt::~ppi_interrupt() {
     idt.unregister_interrupt(this);
 }

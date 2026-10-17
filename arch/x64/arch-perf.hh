@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iostream>
 
 #include "apic.hh"
 #include "exceptions.hh"
@@ -32,6 +33,11 @@ inline CpuVendor cpu_vendor() {
 
 inline bool is_intel() { return cpu_vendor() == CpuVendor::INTEL; }
 inline bool is_amd() { return cpu_vendor() == CpuVendor::AMD; }
+
+// Identifies the cpu design. On a hybrid part the P and E cores report
+// different signatures and expose different counter counts, so anything cached
+// per-PMU has to be keyed on this rather than probed once on the boot cpu.
+inline uint32_t pmu_design_id() { return processor::cpuid(1).a; }
 
 inline uint32_t pmu_num_counters() {
   if (is_intel()) {
@@ -78,9 +84,10 @@ inline void pmc_write_counter(uint32_t ctr, uint64_t value) {
   processor::wrmsr(ctr, value);
 }
 
-inline void pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
+inline bool pmc_start_with_conf(uint32_t /*ctr*/, uint32_t evt_sel,
                                 uint64_t value) {
   processor::wrmsr(evt_sel, value);
+  return true;
 }
 
 inline uint64_t pmc_read(uint32_t ctr) { return processor::rdmsr(ctr); }
@@ -116,6 +123,13 @@ struct PMCOverflowAck {
   uint64_t mask;
 };
 
+// x86 counters are at least 48 bits wide, so wrap counting is never enabled
+// here and these exist only to satisfy the arch-neutral front-end.
+inline uint64_t pmu_overflow_status() { return 0; }
+inline uint64_t pmc_overflow_bit(uint32_t) { return 0; }
+inline void pmc_ack_overflow_mask(uint64_t, PMCIntHandle) {}
+inline void pmc_disable_overflow_int(uint64_t) {}
+
 inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
   if (is_intel())
     return {intel_msr_perf_global_ovf_ctrl, (1ull << pmu_num_counters()) - 1};
@@ -125,6 +139,16 @@ inline PMCOverflowAck pmc_overflow_ack_conf(uint32_t) {
             (1ull << pmu_num_counters()) - 1};
   return {0, 0};
 }
+
+// Drop a pending overflow without touching the interrupt controller.
+inline void pmc_clear_overflow(PMCOverflowAck ack) {
+  if (ack.mask)
+    processor::wrmsr(ack.msr, ack.mask);
+}
+
+// x86 routes the PMU interrupt through LVTPC, which carries a single vector,
+// so a handler only ever runs for its own counter.
+inline bool pmc_overflow_pending(PMCOverflowAck) { return true; }
 
 // IA32_PMCx writes are 32-bit sign-extended; the IA32_A_PMCx aliases take the
 // full counter width, which sampling periods beyond 2^31 need.
@@ -139,7 +163,13 @@ inline PMCIntHandle pmc_attach_overflow_handler(std::function<void()> handler) {
   return vector;
 }
 
-inline void pmc_detach_overflow_handler(PMCIntHandle vector) {
+// LVTPC carries one vector per handler, so there is nothing to claim.
+inline PMCIntHandle pmc_attach_overflow_handler(std::function<bool()>,
+                                                std::function<void()> handler) {
+  return pmc_attach_overflow_handler(std::move(handler));
+}
+
+inline void pmc_detach_overflow_handler(PMCIntHandle vector, uint64_t /*mask*/) {
   processor::apic->write(processor::apicreg::LVTPC, 1u << 16);
   idt.unregister_handler(vector);
 }
@@ -226,5 +256,14 @@ inline const PMCEvent LL_CACHE_MISS     = is_intel() ? INTEL::LL_CACHE_MISS    :
 // AMD this alias reports L1D accesses instead (matches pre-existing behaviour).
 inline const PMCEvent LL_CACHE          = is_intel() ? INTEL::LL_CACHE         : AMD::L1D_ACCESSES;
 } // namespace PERF_COUNT_HW
+
+// x86 has no PMCEID equivalent: the catalogue is per-vendor and validated by
+// construction, so there is nothing to enumerate.
+inline void pmu_dump_state() {
+  std::cout << "PMU: vendor=" << (is_intel() ? "intel" : is_amd() ? "amd" : "?")
+            << " signature=0x" << std::hex << pmu_design_id() << std::dec
+            << " counters=" << pmu_num_counters()
+            << " counter-width=" << pmc_overflow_width() << std::endl;
+}
 
 } // namespace perf
