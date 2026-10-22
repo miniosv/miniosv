@@ -126,6 +126,21 @@ init_cpu:
          * ASID = 16bit TTBR
          */
         ldr     x0, =0x15b5103510
+
+        /* FEAT_HAFDBS (armv8.1): let the hardware maintain the access flag,
+         * and the dirty state through the descriptor's DBM bit. Without it
+         * both are software's job -- an access-flag fault per page, and every
+         * eviction writing back. ID_AA64MMFR1_EL1.HAFDBS is 1 for AF, 2 for
+         * AF and dirty. Every cpu runs this, so they all agree. */
+        mrs     x1, id_aa64mmfr1_el1
+        and     x1, x1, #0xf
+        cmp     x1, #1
+        b.lt    1f
+        orr     x0, x0, #(1 << 39)      // TCR_EL1.HA
+        cmp     x1, #2
+        b.lt    1f
+        orr     x0, x0, #(1 << 40)      // TCR_EL1.HD
+1:
         msr     tcr_el1, x0
         isb
         ret
