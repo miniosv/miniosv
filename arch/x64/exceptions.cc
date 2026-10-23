@@ -8,11 +8,11 @@
 #include "exceptions.hh"
 #include "dump.hh"
 #include <osv/mmu.hh>
+#include "osv/debug.h"
 #include "processor.hh"
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>
 #include <osv/debug.hh>
-#include <libc/signal.hh>
 #include <apic.hh>
 #include <osv/prio.hh>
 #include <osv/rcu.hh>
@@ -282,23 +282,14 @@ bool fixup_fault(exception_frame* ef)
 extern "C" void divide_error(exception_frame *ef);
 void divide_error(exception_frame *ef)
 {
-    sched::exception_guard g;
-    siginfo_t si;
-    si.si_signo = SIGFPE;
-    si.si_code = FPE_INTDIV;
-    osv::generate_signal(si, ef);
+   debug_ll("divide error.");
+   abort(); 
 }
 
 extern "C" void simd_exception(exception_frame *ef)
 {
-    sched::exception_guard g;
-    siginfo_t si;
-    si.si_signo = SIGFPE;
-    // FIXME: set si_code to one of FPE_FLTDIV, FPE_FLTOVF, FPE_FLTUND,
-    // FPE_FLTRES, FPE_FLTINV or FPE_FLTSUB according to the exception
-    // information in MXCSR. It is not a bitmask. See sigaction(2).
-    si.si_code = 0;
-    osv::generate_signal(si, ef);
+   debug_ll("simd_exception"); 
+   abort(); 
 }
 
 extern "C" void nmi(exception_frame* ef)
