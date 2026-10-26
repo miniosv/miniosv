@@ -16,11 +16,11 @@
 #   - os-string    : memset()/memcmp() correctness + throughput
 #   - os-stress    : concurrency / allocator / TLS stress tests
 
-app-objects =  test/osv_tests.o
-app-objects += test/os-features.o
-app-objects += test/os-libc.o
-app-objects += test/os-iostream.o
-app-objects += test/os-memmove.o
-app-objects += test/os-backtrace.o
-app-objects += test/os-string.o
-app-objects += test/os-stress.o
+app-objects =  tests/osv_tests.o
+app-objects += tests/os-features.o
+app-objects += tests/os-libc.o
+app-objects += tests/os-iostream.o
+app-objects += tests/os-memmove.o
+app-objects += tests/os-backtrace.o
+app-objects += tests/os-string.o
+app-objects += tests/os-stress.o
