@@ -304,16 +304,28 @@ void cpu::reschedule_from_interrupt(bool called_from_yield,
 #endif
                 }
             } else if (t._realtime._priority == 0 && p->_runtime.get_local() < t._runtime.get_local()) {
-                preemption_timer.cancel();
                 auto delta = p->_runtime.time_until(t._runtime.get_local());
-                if (delta > 0) {
-                    preemption_timer.set_with_irq_disabled(now + delta);
-                }
+                // delta == 0: p's lead over t is too small to be expressed as
+                // a time, i.e., p's share is used up. Do not keep p running
+                // without a preemption timer (it would never be preempted if
+                // it does not block), but fall through and switch to t.
+                // hysteresis_run_stop() below returns p's thyst credit, which
+                // puts p behind t in the runqueue, so we cannot pick p again.
+                // delta > 0: arm the timer, but with at least a minimum slice;
+                // shorter slices only cost context switches.
+                // delta < 0: time_until() signals "never" (infinite priority
+                // or overflow), so no timer is needed.
+                if (delta != thread_runtime::duration(0)) {
+                    preemption_timer.cancel();
+                    if (delta > 0) {
+                        arm_preemption_timer(delta);
+                    }
 #ifdef __aarch64__
-                return switch_data;
+                    return switch_data;
 #else
-                return;
+                    return;
 #endif
+                }
             }
         } else { /* called_from_yield */
             if (p->_realtime._priority > 0) {
@@ -385,12 +397,16 @@ void cpu::reschedule_from_interrupt(bool called_from_yield,
             if (!runqueue.empty()) {
                 auto& t = *runqueue.begin();
                 auto delta = n->_runtime.time_until(t._runtime.get_local());
-                if (delta > 0) {
-                    preemption_timer.set_with_irq_disabled(now + delta);
+                // A tiny runtime gap may round down to delta == 0. We must
+                // still arm the timer, otherwise n runs until it blocks.
+                // Use a minimum slice instead of rescheduling right away to
+                // avoid switching back and forth at context-switch speed.
+                if (delta >= thread_runtime::duration(0)) {
+                    arm_preemption_timer(delta);
                 }
             }
         } else {
-            preemption_timer.set_with_irq_disabled(now + preempt_after);
+            arm_preemption_timer(preempt_after);
         }
     }
 
@@ -442,6 +458,26 @@ extern "C" thread_switch_data cpu_schedule_next_thread(cpu* cpu,
 void cpu::timer_fired()
 {
     // nothing to do, preemption will happen if needed
+}
+
+// Arm the preemption timer to fire after (at least) the given slice. Call
+// with irq disabled.
+//
+// The clock event driver fires a timer synchronously if its deadline has
+// already passed when it is programmed (e.g., the vCPU was descheduled by
+// the host in between). timer_fired() relies on the sched::preempt() call on
+// interrupt exit, which does not happen in that case, so the preemption would
+// be lost and the current thread would run until it blocks. Instead, raise a
+// real interrupt on this CPU: it is delivered as soon as interrupts are
+// enabled again, and the scheduler then decides anew.
+void cpu::arm_preemption_timer(thread_runtime::duration slice)
+{
+    preemption_timer.set_with_irq_disabled(
+        osv::clock::uptime::now() + std::max(slice, context_switch_penalty));
+    if (preemption_timer.expired()) {
+        trace_sched_ipi(id);
+        wakeup_ipi.send(this);
+    }
 }
 
 struct idle_poll_lock_type {
@@ -1963,8 +1999,17 @@ thread_runtime::time_until(runtime_t target_local_runtime) const
     if (target_local_runtime == inf) {
         return thread_runtime::duration(-1);
     }
-    auto ret = taulog(runtime_t(1) +
-            (target_local_runtime - _Rtt) / _priority / cpu::current()->c);
+    auto x = (target_local_runtime - _Rtt) / _priority / cpu::current()->c;
+    // For small x, taulog(1 + x) is dominated by the approximation error of
+    // fastlog2() (fastlog2(1.0f) < 0), so it can return a negative time for
+    // a positive gap. Use tau * ln(1 + x) ~= tau * x instead (overshooting
+    // by 1% as taulog() does).
+    runtime_t ret;
+    if (x < runtime_t(1e-3)) {
+        ret = tau.count() * x * 1.01f;
+    } else {
+        ret = taulog(runtime_t(1) + x);
+    }
     if (ret > static_cast<runtime_t>(thread_runtime::duration::max().count()))
         return thread_runtime::duration(-1);
     return thread_runtime::duration((thread_runtime::duration::rep) ret);

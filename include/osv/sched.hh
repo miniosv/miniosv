@@ -1056,6 +1056,7 @@ struct cpu : private timer_base::client {
     void enqueue(thread& t);
     void enqueue_first_equal(thread& t);
     void init_idle_thread();
+    void arm_preemption_timer(thread_runtime::duration slice);
     virtual void timer_fired() override;
     class notifier;
     // For scheduler:
