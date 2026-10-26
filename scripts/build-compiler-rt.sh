@@ -64,7 +64,7 @@ GEN_INC="$BUILD_DIR/gen/include"
 mkdir -p "$GEN_INC/bits"
 sh "$OSV_ROOT/include/api/$osv_arch/bits/alltypes.h.sh" > "$GEN_INC/bits/alltypes.h"
 OSV_HEADERS="-isystem $OSV_ROOT/include/api -isystem $OSV_ROOT/include/api/$osv_arch -isystem $GEN_INC"
-KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -fno-omit-frame-pointer $OSV_HEADERS"
+KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec $OSV_HEADERS"
 
 # The aarch64 cpu_model builtin (runtime CPU feature detection) includes
 # <sys/auxv.h>, which OSv does not provide (a kernel has no ELF auxv). Supply a

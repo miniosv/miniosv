@@ -325,7 +325,7 @@ void tracepoint_base::do_log_backtrace(trace_record* tr, u8*& buffer)
 {
     assert(tr->backtrace);
     auto bt = reinterpret_cast<void**>(buffer);
-    auto done = backtrace_safe(bt, backtrace_len);
+    auto done = osv::unwind(bt, nullptr, backtrace_len);
     fill(bt + done, bt + backtrace_len, nullptr);
     buffer += backtrace_len * sizeof(void*);
 }
