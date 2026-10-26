@@ -109,6 +109,7 @@ void print(const char *s)
 // 2=word, 3=dword) - AWS Graviton's 16550 is dword (mmio32).
 unsigned char spcr_iface_type = 0xff;
 unsigned char spcr_access_size = 0;     // GAS AccessSize: 0=undef,1=8b,2=16b,3=32b,4=64b
+char acpi_oem[7] = "";                  // OEMID of the root table, e.g. "AMAZON"
 
 // Unaligned little-endian reads (ACPI table fields are not naturally aligned).
 uint32_t rd32(const void *p)
@@ -143,6 +144,7 @@ uint64_t find_spcr_uart(uint64_t rsdp)
     auto h = reinterpret_cast<const unsigned char *>(hdr);
     uint32_t len = rd32(h + 4);
     uint32_t n = (len > 36) ? (len - 36) / entsize : 0;
+    memcpy(acpi_oem, h + 10, 6);
     for (uint32_t i = 0; i < n; i++) {
         uint64_t tbl = (entsize == 8) ? rd64(h + 36 + i * 8)
                                       : (uint64_t)rd32(h + 36 + i * 4);
@@ -382,6 +384,22 @@ extern "C" EFIAPI EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
     uint64_t rsdp = find_rsdp();
     uint64_t uart_base = find_spcr_uart(rsdp);
 
+    // Diagnostic: what the firmware says about the console UART, printed
+    // through UEFI's own console. The kernel picks its serial driver from
+    // these, and a wrong pick is silent - the only trace is this line.
+    {
+        static const char hex[] = "0123456789abcdef";
+        char line[] = "UEFI stub: spcr type=0x.. access=0x.. base=0x................\n";
+        unsigned char vals[2] = {spcr_iface_type, spcr_access_size};
+        char *t = line + 23; char *a = line + 35; char *b = line + 45;
+        t[0] = hex[vals[0] >> 4]; t[1] = hex[vals[0] & 15];
+        a[0] = hex[vals[1] >> 4]; a[1] = hex[vals[1] & 15];
+        for (int i = 0; i < 16; ++i)
+            b[i] = hex[(uart_base >> (60 - 4 * i)) & 15];
+        print(line);
+        print("UEFI stub: acpi oem="); print(acpi_oem); print("\n");
+    }
+
     // Allocate the hand-off structures as EfiLoaderData so they survive
     // ExitBootServices. Size the memmap generously - the UEFI map is bounded
     // by available RAM regions and never approaches this.
@@ -476,6 +494,43 @@ extern "C" EFIAPI EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
             count++;
         }
         bi->memmap_count = count;
+
+        // A console UART is a device, not memory. Since 2026-10-14 the
+        // Graviton3 firmware in eu-north-1 describes the console as a 16550
+        // at 0x80000000 with byte access, which is exactly where its memory
+        // map ends - the first byte past RAM - while the machine still has
+        // the 16550 at 0x90a0000 with dword registers it always had.
+        // Trusting the table hangs the kernel in the serial driver's first
+        // poll before it can say anything. So on Amazon firmware an SPCR
+        // address that the map covers, or that sits at the map's end, is
+        // taken as the bug it is and replaced by the layout every Graviton
+        // has shipped with. Other firmware is trusted as before.
+        bool amazon = true;
+        for (int i = 0; i < 6; i++)
+            amazon = amazon && acpi_oem[i] == "AMAZON"[i];
+        if (amazon && bi->uart_base) {
+            // "Memory" here: inside an entry that is not MMIO, or exactly
+            // where such an entry ends - the first byte past a RAM block,
+            // which is what the broken table hands out.
+            bool memory = false;
+            for (UINTN i = 0; i < entries && !memory; i++) {
+                auto d = reinterpret_cast<EFI_MEMORY_DESCRIPTOR *>(
+                    reinterpret_cast<unsigned char *>(efi_map) + i * efi_desc_size);
+                uint64_t start = d->PhysicalStart;
+                uint64_t end = start + d->NumberOfPages * EFI_PAGE_SIZE;
+                if (d->Type == EfiMemoryMappedIO ||
+                    d->Type == EfiMemoryMappedIOPortSpace)
+                    continue;
+                memory = (bi->uart_base >= start && bi->uart_base <= end);
+            }
+            if (memory) {
+                print("UEFI stub: SPCR console address is memory, not a "
+                      "device; using the Graviton 16550 at 0x90a0000 (mmio32)\n");
+                bi->uart_base = 0x90a0000ull;
+                bi->uart_type = 0;
+                bi->uart_access_width = 4;
+            }
+        }
 
         if (!EFI_ERROR(BS->ExitBootServices(image, map_key)))
             handoff(entry_phys, bi); // never returns
