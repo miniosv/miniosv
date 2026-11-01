@@ -265,51 +265,6 @@ entry_curr_el_sp\stack\()_irq:
 entry_curr_el_irq 0, 0 // the asynchronous exception handler used when the SP_EL0 is active
 entry_curr_el_irq x, 1 // the asynchronous exception handler used when the SP_ELx is active
 
-.global call_signal_handler_thunk
-.hidden call_signal_handler_thunk
-call_signal_handler_thunk:
-        .type call_signal_handler_thunk, @function
-        .cfi_startproc simple
-        .cfi_signal_frame
-        .cfi_def_cfa %sp, 0
-        .cfi_offset x30, -32 // Point to the elr register located at the -32 offset
-                             // of the exception frame to help gdb link to the
-                             // address when interrupt was raised
-
-        # The call_signal_handler_thunk gets called on exit from the synchronous exception
-        # (most likely page fault handler) as a result of build_signal_frame placing the address
-        # of call_signal_handler_thunk into elr field of the exception frame.
-
-        # On exit from the exception, the stack selector is reset to point to SP_EL1 which
-        # is where we are now. However the build_signal_frame() placed the address of the stack
-        # we are supposed to use in the field 'sp' of the original exception frame still present
-        # on the exception stack (please note the exception have been disabled). So in order
-        # to read the value of the 'sp' field we need to switch back briefly to the exception
-        # stack.
-        mrs     x1, SPsel
-        msr     SPsel, #0      // switch back to SP_EL0 so we can see original exception frame
-        ldr     x0, [sp, #-40] // read 'sp' field placed by build_signal_frame() in the original exception frame
-        msr     SPsel, x1      // switch stack selector to the original value
-        mov     sp, x0         // set sp to the stack setup by build_signal_frame()
-                               // sp points to the signal frame and original exception frame at the same time
-        //TODO: Fix cfa to help debugger
-        msr daifclr, #2        // enable interrupts which were disabled by build_signal_frame()
-        isb
-
-        bl      call_signal_handler //x0 (1st argument) points to the signal frame
-
-        pop_state_from_exception_frame
-        # Adjust stack pointer by the remaining part of the signal frame to get back
-        # to the position in the stack we should be according to the logic in build_signal_frame().
-        add     sp, sp, #288
-        # Please note we may not be on the original stack when exception was triggered.
-        # We would be IF the signal handler was executed on the same stack. However if user set
-        # up his own stack and passed using sigalstack() with SA_ONSTACK to make it handle
-        # out of stack page fault, we would instead stay on that user stack rather than restore
-        # to the one that was exhausted.
-        eret
-        .cfi_endproc
-
 // Keep fpu_state_save/load in sync with struct fpu_state in arch/aarch64/processor.hh
 // void fpu_state_save(fpu_state *s);
 .global fpu_state_save
