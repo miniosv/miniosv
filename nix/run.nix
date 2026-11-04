@@ -12,7 +12,7 @@ pkgs.writeShellScriptBin "miniosv-run" ''
   export PATH=${
     lib.makeBinPath [
       pkgs.qemu
-      pkgs.python3
+      (pkgs.python3.withPackages (ps: [ ps.seccomp ]))
       pkgs.coreutils
     ]
   }:$PATH

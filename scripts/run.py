@@ -94,54 +94,22 @@ def find_firmware(arch):
                  % (arch, pkg, prefix, prefix))
     return code, vars_
 
-# Work around a QEMU bug: since QEMU 10.2 the main loop waits on io_uring
-# (fdmon-io_uring), and it can miss a wakeup (#70, QEMU issue #4581). An OVMF
-# flash write runs aio_poll() on the main loop's io_uring from the vCPU thread;
-# that re-arms the poll on the main loop's wakeup eventfd only by queuing an
-# sqe, which nobody submits while the main loop sleeps in ppoll(). The next
-# bottom half, e.g. for an NVMe doorbell, then never runs: OVMF's NVMe read times
-# out and the boot ends at "No bootable option" (a black screen with release
-# OVMF). QEMU falls back to epoll when io_uring_setup() fails, so we make it fail
-# with a seccomp filter in the QEMU process.
-_SECCOMP_AUDIT_ARCH = {'x86_64': 0xC000003E, 'aarch64': 0xC00000B7}
-_NR_IO_URING_SETUP = 425  # same number on x86_64 and aarch64
-
-def no_io_uring_preexec():
-    "Return a Popen preexec_fn that denies io_uring_setup(), or None."
-    import ctypes
-    audit_arch = _SECCOMP_AUDIT_ARCH.get(host_arch)
-    if audit_arch is None:
+# Work around a QEMU bug (#70, QEMU issue #4581): since QEMU 10.2 the main
+# loop waits on io_uring, and an OVMF flash write can leave it asleep with its
+# wakeup eventfd no longer watched; the next NVMe doorbell is then lost and the
+# boot hangs ("No bootable option"). QEMU falls back to epoll when
+# io_uring_setup() fails, so we make it fail with a seccomp filter.
+def no_io_uring():
+    "Return a Popen preexec_fn that denies io_uring_setup() to QEMU, or None."
+    try:
+        import seccomp  # python3-libseccomp (Fedora) / python3-seccomp (Debian, Ubuntu)
+    except ImportError:
+        print("run.py: python seccomp module missing, QEMU may hang at boot (#70); "
+              "install python3-libseccomp/python3-seccomp", file=sys.stderr)
         return None
-
-    class SockFilter(ctypes.Structure):
-        _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8),
-                    ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]
-
-    class SockFprog(ctypes.Structure):
-        _fields_ = [("len", ctypes.c_ushort),
-                    ("filter", ctypes.POINTER(SockFilter))]
-
-    BPF_LD_W_ABS, BPF_JEQ_K, BPF_RET_K = 0x20, 0x15, 0x06
-    SECCOMP_RET_ALLOW, SECCOMP_RET_ERRNO = 0x7fff0000, 0x00050000
-    prog = (SockFilter * 6)(
-        SockFilter(BPF_LD_W_ABS, 0, 0, 4),               # seccomp_data.arch
-        SockFilter(BPF_JEQ_K, 0, 3, audit_arch),         # other arch: allow
-        SockFilter(BPF_LD_W_ABS, 0, 0, 0),               # seccomp_data.nr
-        SockFilter(BPF_JEQ_K, 0, 1, _NR_IO_URING_SETUP),
-        SockFilter(BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | errno.ENOSYS),
-        SockFilter(BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW))
-    fprog = SockFprog(len(prog), prog)
-    libc = ctypes.CDLL(None, use_errno=True)
-    PR_SET_SECCOMP, PR_SET_NO_NEW_PRIVS, SECCOMP_MODE_FILTER = 22, 38, 2
-
-    def preexec():
-        # Runs in the forked child just before exec. On failure QEMU just
-        # keeps using io_uring.
-        if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0:
-            libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER,
-                       ctypes.byref(fprog), 0, 0)
-    preexec.prog = (prog, fprog)  # keep the filter alive until exec
-    return preexec
+    f = seccomp.SyscallFilter(seccomp.ALLOW)
+    f.add_rule(seccomp.ERRNO(errno.ENOSYS), "io_uring_setup")
+    return f.load
 
 def setup_pflash(arch, code, vars_, pflash_dir, workdir):
     # pflash needs a writable copy of the variable store; the aarch64 virt
@@ -328,7 +296,7 @@ def start_osv_qemu(options):
             print(format_args(cmdline))
             return
 
-        preexec = None if options.qemu_io_uring else no_io_uring_preexec()
+        preexec = None if options.qemu_io_uring else no_io_uring()
 
         try:
             stty_save()

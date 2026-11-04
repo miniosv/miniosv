@@ -32,9 +32,10 @@ make arch=aarch64                  # build the aarch64 image -> build/release.aa
 `make` produces a bootable GPT/ESP disk image (`loader.img`); `run.py` boots it as an NVMe disk
 and puts the guest serial console on your terminal (Ctrl-A C for the QEMU monitor, Ctrl-A X to
 quit). Requirements: QEMU, the UEFI firmware (`ovmf` for x86-64, `qemu-efi-aarch64` for aarch64),
-and `mtools` + `gdisk` to build the disk image. Override the firmware with the `OVMF_CODE`/
-`OVMF_VARS` or `AAVMF_CODE`/`AAVMF_VARS` env vars. `make smoke-test` boots the image headless and
-checks it reaches the kernel.
+Python's seccomp module (`python3-seccomp` on Debian/Ubuntu, `python3-libseccomp` on Fedora; it
+keeps QEMU >= 10.2 from hanging the boot, see #70), and `mtools` + `gdisk` to build the disk image.
+Override the firmware with the `OVMF_CODE`/`OVMF_VARS` or `AAVMF_CODE`/`AAVMF_VARS` env vars.
+`make smoke-test` boots the image headless and checks it reaches the kernel.
 
 The default app (`app/app.cc`) is a hello-world placeholder: it prints a greeting and then spins,
 so the boot output stays on the console. Build the test suite instead with `make app=tests` — it

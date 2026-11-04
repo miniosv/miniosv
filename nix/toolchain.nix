@@ -58,6 +58,6 @@ in
     mtools
     dosfstools
     gptfdisk
-    (python3.withPackages (ps: [ ps.pyyaml ]))
+    (python3.withPackages (ps: [ ps.pyyaml ps.seccomp ])) # seccomp: run.py, see #70
   ];
 }
