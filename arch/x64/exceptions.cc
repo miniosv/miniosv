@@ -7,7 +7,6 @@
 
 #include "exceptions.hh"
 #include "dump.hh"
-#include <osv/mmu.hh>
 #include "processor.hh"
 #include <osv/interrupt.hh>
 #include <osv/sched.hh>

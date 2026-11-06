@@ -9,8 +9,9 @@
 #include "arch.hh"
 #include "arch-cpu.hh"
 #include "arch-setup.hh"
-#include <osv/mempool.hh>
-#include <osv/mmu.hh>
+#include <osv/mem/frames.hh>
+#include <osv/mem/mapping.hh>
+#include <osv/mem/phys.hh>
 #include "processor.hh"
 #include "processor-flags.h"
 #include "msr.hh"
@@ -39,10 +40,7 @@ void setup_temporary_phys_map()
     // duplicate 1:1 mapping into phys_mem
     u64 cr3 = processor::read_cr3();
     auto pt = reinterpret_cast<u64*>(cr3);
-    for (auto&& area : mmu::identity_mapped_areas) {
-        auto base = reinterpret_cast<void*>(get_mem_area_base(area));
-        pt[mmu::pt_index(base, 3)] = pt[0];
-    }
+    pt[mem::mapping::pt_index(mem::linear, 3)] = pt[0];
 }
 
 // A copy of the UEFI memory map taken before we switch page tables. The map
@@ -112,17 +110,17 @@ void arch_setup_free_memory()
     snapshot_memmap();
 
     for_each_usable_range([] (mem_range ent) {
-        memory::phys_mem_size += ent.size;
+        mem::frames::phys_mem_size += ent.size;
     });
     constexpr u64 initial_map = 1 << 30; // 1GB mapped by startup code
 
     auto c = processor::cpuid(0x80000000);
     if (c.a >= 0x80000008) {
         c = processor::cpuid(0x80000008);
-        mmu::phys_bits = c.a & 0xff;
-        mmu::virt_bits = (c.a >> 8) & 0xff;
-        if(mmu::phys_bits > mmu::max_phys_bits){
-            mmu::phys_bits = mmu::max_phys_bits;
+        mem::mapping::phys_bits = c.a & 0xff;
+        mem::mapping::virt_bits = (c.a >> 8) & 0xff;
+        if(mem::mapping::phys_bits > mem::mapping::max_phys_bits){
+            mem::mapping::phys_bits = mem::mapping::max_phys_bits;
         }
     }
 
@@ -146,31 +144,25 @@ void arch_setup_free_memory()
         } else if (ent.addr >= initial_map) {
             return;
         }
-        mmu::free_initial_memory_range(ent.addr, ent.size);
+        mem::frames::add_region(ent.addr, ent.size);
     });
-    for (auto&& area : mmu::identity_mapped_areas) {
-        auto base = reinterpret_cast<void*>(get_mem_area_base(area));
-        mmu::linear_map(base, 0, initial_map,
-            area == mmu::mem_area::main ? "main" :
-            area == mmu::mem_area::page ? "page" : "mempool",
-            initial_map);
-    }
+    mem::map_phys_at(mem::linear, 0, initial_map, initial_map);
     // Map the core, loaded by the boot loader
     // In order to properly setup mapping between virtual
     // and physical we need to take into account where kernel
     // is loaded in physical memory - elf_phys_start - and
     // where it is linked to start in virtual memory - elf_start
-    static mmu::phys elf_phys_start = reinterpret_cast<mmu::phys>(elf_header);
+    static mem::frames::phys_addr elf_phys_start = reinterpret_cast<mem::frames::phys_addr>(elf_header);
     // Publish the kernel image's physical base for the phys/virt helpers in
     // core/mmu.cc (the kernel is loaded at a firmware-chosen base, not a fixed
     // one). There is a simple invariant between elf_phys_start and elf_start as
     // expressed by the assignment below.
-    mmu::elf_phys_start = reinterpret_cast<void*>(elf_phys_start);
+    mem::frames::elf_phys_start = reinterpret_cast<void*>(elf_phys_start);
     elf_start = reinterpret_cast<void*>(elf_phys_start + kernel_vm_shift);
     elf_size = edata_phys - elf_phys_start;
-    mmu::linear_map(elf_start, elf_phys_start, elf_size, "kernel", OSV_KERNEL_BASE);
+    mem::map_phys_at(elf_start, elf_phys_start, elf_size, OSV_KERNEL_BASE);
     // now that we have some free memory, we can start mapping the rest
-    mmu::switch_to_runtime_page_tables();
+    mem::mapping::switch_to_runtime_page_tables();
     for_each_usable_range([] (mem_range ent) {
         //
         // Free the memory below elf_phys_start which we could not before
@@ -179,7 +171,7 @@ void arch_setup_free_memory()
             if (ent.addr + ent.size >= (u64)elf_phys_start) {
                 ent_below_kernel = truncate_above(ent, (u64) elf_phys_start);
             }
-            mmu::free_initial_memory_range(ent_below_kernel.addr, ent_below_kernel.size);
+            mem::frames::add_region(ent_below_kernel.addr, ent_below_kernel.size);
             // If there is nothing left below elf_phys_start return
             if (ent.addr + ent.size <= (u64)elf_phys_start) {
                return;
@@ -193,13 +185,8 @@ void arch_setup_free_memory()
         if (intersects(ent, initial_map)) {
             ent = truncate_below(ent, initial_map);
         }
-        for (auto&& area : mmu::identity_mapped_areas) {
-            auto base = reinterpret_cast<char*>(get_mem_area_base(area));
-            mmu::linear_map(base + ent.addr, ent.addr, ent.size,
-               area == mmu::mem_area::main ? "main" :
-               area == mmu::mem_area::page ? "page" : "mempool", ~0);
-        }
-        mmu::free_initial_memory_range(ent.addr, ent.size);
+        mem::map_phys_at(mem::linear + ent.addr, ent.addr, ent.size, ~0);
+        mem::frames::add_region(ent.addr, ent.size);
     });
 }
 
@@ -257,6 +244,7 @@ void arch_init_drivers()
 #include "drivers/console.hh"
 #include "drivers/isa-serial.hh"
 #include "early-console.hh"
+#include <osv/mem/mapping.hh>
 
 void arch_init_early_console()
 {

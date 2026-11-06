@@ -14,6 +14,8 @@
 #   - os-memmove   : memmove() overlap-correctness regression test
 #   - os-backtrace : .eh_frame unwinder interrupt-safety test
 #   - os-string    : memset()/memcmp() correctness + throughput
+#   - os-memory    : the memory clients: early and the heap, plus malloc/mmap
+#   - os-memory-primitives : vspace, frames and mapping, one header per function
 #   - os-stress    : concurrency / allocator / TLS stress tests
 
 app-objects =  tests/osv_tests.o
@@ -23,4 +25,6 @@ app-objects += tests/os-iostream.o
 app-objects += tests/os-memmove.o
 app-objects += tests/os-backtrace.o
 app-objects += tests/os-string.o
+app-objects += tests/os-memory.o
+app-objects += tests/os-memory-primitives.o
 app-objects += tests/os-stress.o

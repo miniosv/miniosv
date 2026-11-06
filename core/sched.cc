@@ -6,7 +6,6 @@
  */
 
 #include <osv/sched.hh>
-#include <osv/mmu.hh>
 #include <list>
 #include <osv/mutex.h>
 #include <osv/rwlock.h>
@@ -394,12 +393,6 @@ void cpu::reschedule_from_interrupt(bool called_from_yield,
         }
     }
 
-    if (app_thread.load(std::memory_order_relaxed) != n->_app) { // don't write into a cache line if it can be avoided
-        app_thread.store(n->_app, std::memory_order_relaxed);
-    }
-    if (lazy_flush_tlb.exchange(false, std::memory_order_seq_cst)) {
-        mmu::flush_tlb_local();
-    }
 #ifdef __aarch64__
     switch_data.old_thread_state = &(p->_state);
     switch_data.new_thread_state = &(n->_state);

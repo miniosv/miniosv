@@ -24,7 +24,6 @@
 #include <osv/strace.hh>
 #include <osv/power.hh>
 #include <osv/rcu.hh>
-#include <osv/mempool.hh>
 #include <osv/version.h>
 #include <osv/shutdown.hh>
 #include <osv/boot.hh>
@@ -201,8 +200,6 @@ void main_cont()
         // spin
     }
 
-    memory::enable_debug_allocator();
-
     if (sched::cpus.size() > sched::max_cpus) {
         printf("Too many cpus, can't boot with greater than %u cpus.\n", sched::max_cpus);
         poweroff();
@@ -262,5 +259,5 @@ void main_cont()
         sched::thread::wait_until([] { return false; });
     }
 
-        osv::shutdown();
+    osv::shutdown();
 }
