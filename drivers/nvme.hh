@@ -140,7 +140,9 @@ private:
   u32 _doorbell_stride;
   u32 _qsize;
 
-  std::unique_ptr<nvme_identify_ctlr_t> _identify_controller;
+  std::unique_ptr<nvme_identify_ctlr_t,
+                  aligned_new_deleter<nvme_identify_ctlr_t>>
+      _identify_controller;
   size_t _max_transfer = 0;
 
   // What the controller allocated in response to Set Features / Number of

@@ -15,6 +15,8 @@
 #include <cassert>
 #include <errno.h>
 #include <map>
+#include <new>
+#include <stdlib.h>
 #include <string.h>
 #include <string>
 #include <sys/mman.h>
@@ -79,6 +81,23 @@ static void setup_delete_io_queue_cmd(Q *delete_queue_cmd, int qid,
   delete_queue_cmd->common.prp1 = queue_addr;
   delete_queue_cmd->qid = qid;
 }
+
+// An identify payload reaches the controller as one PRP entry, which covers a
+// page from its own offset: a buffer starting mid-page is filled only up to the
+// page boundary and the rest of the structure stays zero.
+template <typename T> static T *alloc_identify_data() {
+  static_assert(sizeof(T) <= mem::mapping::page_size,
+                "an identify payload is one PRP entry, so one page");
+  void *p = aligned_alloc(mem::mapping::page_size, mem::mapping::page_size);
+  assert(p);
+  return new (p) T();
+}
+
+using identify_ctlr_ptr =
+    std::unique_ptr<nvme_identify_ctlr_t,
+                    aligned_new_deleter<nvme_identify_ctlr_t>>;
+using identify_ns_ptr =
+    std::unique_ptr<nvme_identify_ns_t, aligned_new_deleter<nvme_identify_ns_t>>;
 
 // ===========================================================================
 // Lifecycle / probing
@@ -291,7 +310,7 @@ void nvme_driver::create_admin_queue() {
 int nvme_driver::identify_controller() {
   assert(_admin_queue);
   nvme_sq_entry_t cmd;
-  auto data = new nvme_identify_ctlr_t;
+  auto data = identify_ctlr_ptr(alloc_identify_data<nvme_identify_ctlr_t>());
 
   // On AWS Nitro a freshly attached EBS volume can report CSTS.RDY and
   // complete admin commands successfully while its backing attachment
@@ -301,7 +320,8 @@ int nvme_driver::identify_controller() {
   for (int attempt = 0;; attempt++) {
     setup_identify_cmd(&cmd, 0, CMD_IDENTIFY_CONTROLLER);
     auto res = _admin_queue->submit_and_return_on_completion(
-        &cmd, (void *)mem::mapping::to_phys(data), mem::mapping::page_size);
+        &cmd, (void *)mem::mapping::to_phys(data.get()),
+        mem::mapping::page_size);
 
     if (res.sc != 0 || res.sct != 0) {
       nvme_e("Identify controller failed nvme%d, sct=%d, sc=%d", _id, res.sct,
@@ -324,14 +344,14 @@ int nvme_driver::identify_controller() {
   printf("cqes min: %lu cqes max: %lu\n", (u64)(data->cqes >> 4),
          (u64)(data->cqes & 0xf));
 
-  _identify_controller.reset(data);
+  _identify_controller = std::move(data);
   return 0;
 }
 
 int nvme_driver::identify_namespace(u32 nsid) {
   assert(_admin_queue);
   nvme_sq_entry_t cmd;
-  auto data = std::unique_ptr<nvme_identify_ns_t>(new nvme_identify_ns_t);
+  auto data = identify_ns_ptr(alloc_identify_data<nvme_identify_ns_t>());
 
   // Same EBS-attach race as in identify_controller: success status with
   // a zeroed payload means the backing volume is not ready yet. A real

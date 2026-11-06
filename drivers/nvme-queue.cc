@@ -634,6 +634,7 @@ namespace nvme
         u16 cid = _sq._tail;
         cmd->rw.common.cid = cid;
 
+        // One PRP entry, so the payload must lie within one page of "data".
         if (data != nullptr && datasize > 0)
         {
             cmd->rw.common.prp1 = (u64)data;
