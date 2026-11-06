@@ -172,7 +172,7 @@ inline bool pmu_has_long_event_counters() {
 // the counters: they are unknown at reset, and a stale flag whose interrupt
 // is still enabled keeps the level-triggered PMU interrupt asserted forever.
 // This stops whatever the cpu is counting, so it runs once per cpu, before
-// anything is armed there, not once per PerfEvent or PMCSampler: a sampler
+// anything is armed there, not once per PerfEvent or PerfSampler: a sampler
 // built next to a running PerfEvent used to zero it, and vice versa. The bit
 // is set after the reset, so a preempting thread on the same cpu can at
 // worst reset twice while neither has armed a counter yet. Called with
