@@ -5,9 +5,9 @@
 // linked directly into the kernel image (app.o in loader.elf). The kernel
 // calls osv_app_main() once, after early initialization, on a dedicated thread.
 //
-// This is a minimal "hello world" placeholder: it prints a greeting and powers
-// the machine off so a run exits cleanly. The conformance and stress suites
-// that used to live here now build with `make app=tests` (see test/).
+// This is a minimal "hello world" placeholder: it prints a greeting and then
+// spins so the boot output stays on the console. The conformance and stress
+// suites that used to live here now build with `make app=tests` (see tests/).
 
 #include <cstdint>
 #include <osv/power.hh>

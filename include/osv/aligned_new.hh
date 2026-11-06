@@ -25,6 +25,10 @@
  * new instead of aligned_new.
  */
 
+#include <cassert>
+#include <cstdlib>
+#include <utility>
+
 template<typename T, typename... Args>
 T* aligned_new(Args&&... args) {
     void *p = aligned_alloc(alignof(T), sizeof(T));

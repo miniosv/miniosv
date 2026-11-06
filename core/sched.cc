@@ -796,58 +796,14 @@ void thread::unpin()
     helper->join();
 }
 
-void cpu::load_balance()
+void cpu::on_cpu_up()
 {
+    // fire the per-cpu "cpu up" notifiers 
+    // - clock per-CPU setup 
+    // This must run on the CPU being brought up, since the callbacks 
+    // iniitialize cpu::current()'s per-CPU state
     notifier::fire();
-    timer tmr(*thread::current());
-    while (true) {
-        tmr.set(osv::clock::uptime::now() + 100_ms);
-        thread::wait_until([&] { return tmr.expired(); });
-        if (runqueue.empty()) {
-            continue;
-        }
-        auto min = *std::min_element(cpus.begin(), cpus.end(),
-                [](cpu* c1, cpu* c2) { return c1->load() < c2->load(); });
-        if (min == this) {
-            continue;
-        }
-        // This CPU is temporarily running one extra thread (this thread),
-        // so don't migrate a thread away if the difference is only 1.
-        if (min->load() >= (load() - 1)) {
-            continue;
-        }
-#if CONF_lazy_stack_invariant
-        assert(!thread::current()->is_app());
-#endif
-        WITH_LOCK(irq_lock) {
-            auto i = std::find_if(runqueue.rbegin(), runqueue.rend(),
-                    [](thread& t) { return t._migration_lock_counter == 0; });
-            if (i == runqueue.rend()) {
-                continue;
-            }
-            auto& mig = *i;
-            trace_sched_migrate(&mig, min->id);
-            runqueue.erase(std::prev(i.base()));  // i.base() returns off-by-one
-            // we won't race with wake(), since we're not thread::waiting
-            assert(mig._detached_state->st.load() == thread::status::queued);
-            mig._detached_state->st.store(thread::status::waking);
-            mig.suspend_timers();
-            mig._detached_state->_cpu = min;
-            // Convert the CPU-local runtime measure to a globally meaningful
-            // measure
-            mig._runtime.export_runtime();
-            mig.remote_thread_local_var(::percpu_base) = min->percpu_base;
-            mig.remote_thread_local_var(current_cpu) = min;
-            mig.stat_migrations.incr();
-            min->incoming_wakeups[id].push_back(mig);
-            min->incoming_wakeups_mask.set(id);
-            // FIXME: avoid if the cpu is alive and if the priority does not
-            // FIXME: warrant an interruption
-            min->send_wakeup_ipi();
-        }
-    }
 }
-
 cpu::notifier::notifier(std::function<void ()> cpu_up)
     : _cpu_up(cpu_up)
 {

@@ -6,7 +6,7 @@
 # Counts *.c *.h *.cc *.hh *.cpp *.hpp in the given path (default: current
 # directory). Excluded: the libc API headers (include/api/), vendored
 # third-party code (external/), build output (build/), apps and tests
-# (apps/, app/, test/, tests/), and build tooling / non-source data
+# (apps/, app/, tests/), and build tooling / non-source data
 # (tools/, scripts/, static/).
 #
 # Output:
@@ -19,7 +19,7 @@ ROOT=${1:-.}
 # Build the find exclusion prune list
 EXCLUDE_DIRS=(
     external build
-    apps app test tests
+    apps app tests
     tools scripts static
 )
 

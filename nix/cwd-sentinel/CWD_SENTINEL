@@ -1,0 +1,7 @@
+This directory is the default source for the `cwd` flake input. Its presence
+here means the caller has not overridden `cwd`, and the build will refuse to
+proceed with a helpful error message.
+
+To use the current working directory as the app source, override the input:
+
+  nix build --override-input cwd "path:$PWD" github:seb711/miniosv#cwd-x86_64

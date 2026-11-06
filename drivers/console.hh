@@ -8,11 +8,25 @@
 #ifndef DRIVERS_CONSOLE_HH
 #define DRIVERS_CONSOLE_HH
 
+#include <termios.h>
+
 #include "console-driver.hh"
+
+struct termios;
+struct winsize;
 
 namespace console {
 
+// The terminal settings of the console, for the termios calls.
+extern ::termios tio;
+extern ::winsize ws;
+
 void write(const char *msg, size_t len);
+// Blocking read of at least one byte; returns the number read. Yields between
+// polls so a reader waiting at a prompt does not monopolise its CPU.
+size_t read(char *buf, size_t len);
+// Whether read() would return without blocking.
+bool input_available();
 void write_ll(const char *msg, size_t len);
 void console_init();
 void console_driver_add(console_driver *driver);

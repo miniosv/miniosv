@@ -226,7 +226,7 @@ void ap_bringup(sched::cpu* c)
     __sync_fetch_and_add(&smp_processors, 1);
     processor::kvm_pv_eoi_init();
     c->idle_thread->start();
-    c->load_balance();
+    c->on_cpu_up(); 
 }
 
 sched::cpu* smp_initial_find_current_cpu()
@@ -249,10 +249,9 @@ void smp_launch()
         if (c == boot_cpu) {
             sched::thread::current()->_detached_state->_cpu = c;
             // c->init_on_cpu() already done in main().
-            (new sched::thread([c] { c->load_balance(); },
-                    sched::thread::attr().pin(c).name(name)))->start();
             c->init_idle_thread();
             c->idle_thread->start();
+            c->on_cpu_up(); 
             continue;
         }
         sched::thread::attr attr;

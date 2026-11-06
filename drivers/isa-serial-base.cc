@@ -79,6 +79,20 @@ void isa_serial_console_base::write(const char *str, size_t len)
         putchar(*str++);
 }
 
+bool isa_serial_console_base::input_available()
+{
+    return (read_byte(regs::LSR) & lsr::RECEIVE_DATA_READY) != 0;
+}
+
+// Poll the receive-ready bit; -1 when the UART has nothing for us.
+int isa_serial_console_base::read_char()
+{
+    if (!(read_byte(regs::LSR) & lsr::RECEIVE_DATA_READY)) {
+        return -1;
+    }
+    return read_byte(0);
+}
+
 void isa_serial_console_base::putchar(const char ch)
 {
     u8 val;

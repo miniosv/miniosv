@@ -6,7 +6,7 @@
 #
 #     make
 #
-# (See test/Makefile for the alternative test application, built with
+# (See tests/Makefile for the alternative test application, built with
 #  `make app=tests`.)
 
 app-objects = app/app.o

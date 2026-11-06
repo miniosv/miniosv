@@ -45,9 +45,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 
-// arc4random() is provided by the OSv kernel (drivers/random.cc) but not
-// declared by any libc header here.
-extern "C" uint32_t arc4random(void);
+#include "drivers/random.hh"
 
 static std::atomic<int> g_checks{0};
 static std::atomic<int> g_fails{0};

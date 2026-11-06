@@ -64,7 +64,7 @@ GEN_INC="$BUILD_DIR/gen/include"
 mkdir -p "$GEN_INC/bits"
 sh "$OSV_ROOT/include/api/$osv_arch/bits/alltypes.h.sh" > "$GEN_INC/bits/alltypes.h"
 OSV_HEADERS="-isystem $OSV_ROOT/include/api -isystem $OSV_ROOT/include/api/$osv_arch -isystem $GEN_INC"
-KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -fno-omit-frame-pointer $OSV_HEADERS"
+KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec $OSV_HEADERS"
 
 # The aarch64 cpu_model builtin (runtime CPU feature detection) includes
 # <sys/auxv.h>, which OSv does not provide (a kernel has no ELF auxv). Supply a
@@ -105,6 +105,7 @@ _progress_run "$BUILD_DIR-configure.log" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_PROJECT_INCLUDE="$OSV_ROOT/scripts/require-clang.cmake" \
         -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         -DLLVM_ENABLE_RUNTIMES="compiler-rt" \
         -DCOMPILER_RT_BUILD_BUILTINS=ON \

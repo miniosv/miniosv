@@ -74,13 +74,15 @@ void *__dso_handle;
 static void print_backtrace(void)
 {
     void *addrs[128];
+    unsigned long cfas[128];
     int len;
 
     debug_ll("\n[backtrace]\n");
 
-    len = backtrace_safe(addrs, 128);
+    len = osv::unwind(addrs, cfas, 128);
 
     /* Start with i=1 to skip abort(const char *)  */
+    int frame = 0;
     for (int i = 1; i < len; i++) {
         char name[1024];
         void *addr = (char*)addrs[i] - INSTR_SIZE_MIN;
@@ -89,7 +91,8 @@ static void print_backtrace(void)
             // Skip abort() (which called abort(const char*) already skipped
             continue;
         }
-        debug_ll("0x%016lx <%s>\n", addr, name);
+        debug_ll("#%-2d 0x%016lx  cfa=0x%016lx  <%s>\n",
+                 frame++, addr, cfas[i], name);
     }
 }
 
@@ -375,7 +378,11 @@ void exit(int status)
 
 // "The function _exit() is like exit(3), but does not call any functions
 // registered with atexit(3) or on_exit(3)."
-//
+OSV_LIBC_API
+void _exit(int status)
+{
+    osv::shutdown();
+}
 
 OSV_LIBC_API
 int atexit(void (*func)())

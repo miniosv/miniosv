@@ -9,6 +9,7 @@
 #define RANDOM_DEVICE_H
 
 #include <osv/types.h>
+#include <sys/types.h>
 #include <memory>
 
 namespace randomdev {
@@ -34,6 +35,11 @@ public:
 
 void randomdev_init();
 
+}
+
+extern "C" {
+uint32_t arc4random(void);
+void arc4rand(void *ptr, u_int len, int /*reseed*/);
 }
 
 #endif

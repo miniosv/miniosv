@@ -19,6 +19,9 @@
 
 #include <termios.h>
 #include <signal.h>
+#include <osv/sched.hh>
+#include <osv/terminal.h>
+#include <cerrno>
 
 
 namespace console {
@@ -61,6 +64,30 @@ void write_ll(const char *msg, size_t len)
     mux.write_ll(msg, len);
 }
 
+size_t read(char *buf, size_t len)
+{
+    if (len == 0) {
+        return 0;
+    }
+    // Block until something arrives: a reader at a prompt has nothing else to
+    // do, and returning 0 would look like EOF.
+    int c;
+    while ((c = mux.read_char()) < 0) {
+        sched::thread::yield();
+    }
+
+    size_t n = 0;
+    do {
+        buf[n++] = static_cast<char>(c);
+    } while (n < len && (c = mux.read_char()) >= 0);
+    return n;
+}
+
+bool input_available()
+{
+    return mux.input_available();
+}
+
 void console_driver_add(console_driver *driver)
 {
     mux.driver_add(driver);
@@ -73,4 +100,16 @@ void console_init()
     mux.start();
 }
 
+}
+
+// Reached from application code (see include/osv/terminal.h), which is why it
+// has C linkage and lives outside namespace console.
+extern "C" int osv_terminal_size(struct winsize *out)
+{
+    if (!out) {
+        errno = EFAULT;
+        return -1;
+    }
+    *out = console::ws;
+    return 0;
 }

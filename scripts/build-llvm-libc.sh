@@ -75,8 +75,8 @@ cp "$CONFIG_SRC/config.json"     "$ARCH_CONF/config.json"
 
 # 3. configure + build
 # Codegen must match the kernel (see COMMON in the top-level Makefile):
-# non-PIE, no stack protector, local-exec TLS, keep frame pointers.
-KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -fno-omit-frame-pointer"
+# non-PIE, no stack protector, local-exec TLS.
+KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec"
 
 mkdir -p "$BUILD_DIR"
 echo "  LLVM-LIBC configure..."
@@ -85,6 +85,7 @@ _progress_run "$BUILD_DIR-configure.log" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_COMPILER=clang \
         -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_PROJECT_INCLUDE="$OSV_ROOT/scripts/require-clang.cmake" \
         -DLLVM_ENABLE_RUNTIMES=libc \
         -DLLVM_LIBC_FULL_BUILD=ON \
         -DLIBC_TARGET_TRIPLE="$llvm_arch-none-elf" \

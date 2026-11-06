@@ -69,7 +69,7 @@ struct arch_cpu {
 
 struct arch_thread {
     char interrupt_stack[CONF_interrupt_stack_size] __attribute__((aligned(16)));
-    char exception_stack[4096*4] __attribute__((aligned(16)));
+    char exception_stack[4096*8] __attribute__((aligned(16)));
 };
 
 void fpu_state_init(processor::fpu_state *s);
@@ -184,6 +184,13 @@ inline void arch_cpu::init_on_cpu()
             bits |= xcr0_avx;
         }
         write_xcr(xcr0, bits);
+        if (features().avx && features().avx512f) {
+            write_xcr(xcr0, bits | xcr0_avx512);
+            // Doesn't fit in fpu_state: undo.
+            if (xsave_size() > sizeof(fpu_state)) {
+                write_xcr(xcr0, bits);
+            }
+        }
     }
 
     // We can't trust the FPU and the MXCSR to be always initialized to default values.
