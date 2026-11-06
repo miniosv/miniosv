@@ -11,7 +11,9 @@
 #include "processor.hh"
 #include "exceptions.hh"
 #include "cpuid.hh"
-#include "osv/pagealloc.hh"
+#include <osv/mem/frames.hh>
+#include <osv/mem/phys.hh>
+#include <osv/debug.hh>
 #include <xmmintrin.h>
 #include "msr.hh"
 #include <osv/kernel_config.h>
@@ -92,12 +94,22 @@ struct save_fpu {
     }
 };
 
-struct fpu_state_alloc_page {
-    processor::fpu_state* s =
-            static_cast<processor::fpu_state*>(memory::alloc_page());
-    explicit fpu_state_alloc_page() { fpu_state_init(s); }
+struct fpu_state_page {
+    mem::frames::phys_addr pa;
+    processor::fpu_state *s;
+    explicit fpu_state_page()
+        : pa(mem::frames::alloc(4096, 4096))
+    {
+        // A cpu cannot run without somewhere to save its floating-point state,
+        // so there is nothing to report this to.
+        if (pa == mem::frames::no_memory) {
+            abort("fpu: no page for a cpu's floating-point save area\n");
+        }
+        s = static_cast<processor::fpu_state *>(mem::map_phys(pa, 4096));
+        fpu_state_init(s);
+    }
     processor::fpu_state *addr(){ return s; }
-    ~fpu_state_alloc_page(){ memory::free_page(s); }
+    ~fpu_state_page(){ mem::frames::free(pa, 4096); }
 };
 
 struct fpu_state_inplace {
@@ -106,7 +118,7 @@ struct fpu_state_inplace {
     processor::fpu_state *addr() { return &s; }
 } __attribute__((aligned(64)));
 
-typedef save_fpu<fpu_state_alloc_page> arch_fpu;
+typedef save_fpu<fpu_state_page> arch_fpu;
 typedef save_fpu<fpu_state_inplace> inplace_arch_fpu;
 
 // lock adapter for inplace_arch_fpu

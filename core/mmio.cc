@@ -6,10 +6,9 @@
  */
 
 #include <osv/types.h>
-#include <osv/mmu.hh>
+#include <osv/mem/phys.hh>
 #include <osv/mmio.hh>
 
-using namespace mmu;
 
 void mmio_setb(mmioaddr_t addr, u8 val)
 {
@@ -53,8 +52,8 @@ u64 mmio_getq(mmioaddr_t addr)
 
 mmioaddr_t mmio_map(u64 paddr, size_t size_bytes, const char* name)
 {
-    char* map_to = mmu::phys_mem + paddr;
-    linear_map(map_to, paddr, size_bytes, name);
+    char* map_to = mem::linear + paddr;
+    mem::map_phys_at(map_to, paddr, size_bytes);
     return map_to;
 }
 
