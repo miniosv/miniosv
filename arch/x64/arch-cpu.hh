@@ -71,7 +71,7 @@ struct arch_cpu {
 
 struct arch_thread {
     char interrupt_stack[CONF_interrupt_stack_size] __attribute__((aligned(16)));
-    char exception_stack[4096*4] __attribute__((aligned(16)));
+    char exception_stack[4096*8] __attribute__((aligned(16)));
 };
 
 void fpu_state_init(processor::fpu_state *s);

@@ -148,7 +148,6 @@ void* do_main_thread(void *_main_args)
     // There is no filesystem: nothing to mount.
     // Networking was removed (Phase 9.2): no interfaces to bring up.
 
-
     boot_time.event("Total time");
 #ifdef __x86_64__
     // Some hypervisors like firecracker when booting OSv

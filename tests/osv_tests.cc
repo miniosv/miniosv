@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <osv/power.hh>
 
+int os_backtrace_main(); 
 int os_features_main();
 int os_libc_main();
 int os_stress_main();
@@ -33,6 +34,8 @@ extern "C" void osv_app_main()
     printf("\n######## OSv test application ########\n\n");
 
     int rc = 0;
+    rc |= os_backtrace_main();
+    printf("\n");
     rc |= os_features_main();
     printf("\n");
     rc |= os_libc_main();

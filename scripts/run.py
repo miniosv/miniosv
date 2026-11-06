@@ -22,10 +22,13 @@ import sys
 import argparse
 import os
 import errno
+import pty
 import shutil
 import tempfile
 import time
 import re
+
+import symbolize
 
 devnull = open('/dev/null', 'w')
 
@@ -278,14 +281,23 @@ def start_osv_qemu(options):
 
         try:
             stty_save()
-            proc = subprocess.Popen(cmdline, env=os.environ.copy())
-            try:
-                if pin_cpus:
-                    pin_vcpus(proc, pin_cpus)
-            finally:
-                ret = proc.wait()
-            if ret != 0:
-                sys.exit("qemu failed.")
+            if options.symbolize:
+                log_path = os.path.join(workdir, 'console.log')
+                ret = _run_with_tee(cmdline, log_path, pin_cpus)
+                if ret != 0:
+                    print("qemu exited with status %d." % ret, file=sys.stderr)
+                with open(log_path) as fh:
+                    symbolize.print_from(
+                        fh.read(), symbolize.elf_next_to(options.image_file))
+            else:
+                proc = subprocess.Popen(cmdline, env=os.environ.copy())
+                try:
+                    if pin_cpus:
+                        pin_vcpus(proc, pin_cpus)
+                finally:
+                    ret = proc.wait()
+                if ret != 0:
+                    sys.exit("qemu failed.")
         except OSError as e:
             if e.errno == errno.ENOENT:
                 print("'%s' binary not found. Please install the "
@@ -298,6 +310,23 @@ def start_osv_qemu(options):
             stty_restore()
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+def _run_with_tee(cmdline, log_path, pin_cpus=None):
+    "Run cmdline, copying its output to both stdout and log_path."
+    proc = subprocess.Popen(cmdline, env=os.environ.copy(),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    with open(log_path, 'wb') as log:
+        try:
+            if pin_cpus:
+                pin_vcpus(proc, pin_cpus)
+        finally:
+            # Always drain the pipe so qemu can't block on a full buffer.
+            for data in iter(lambda: os.read(proc.stdout.fileno(), 4096), b''):
+                log.write(data)
+                os.write(sys.stdout.fileno(), data)
+            ret = proc.wait()
+    return ret
+
 
 def choose_hypervisor(arch):
     # KVM only when the guest arch matches the host and /dev/kvm is usable.
@@ -357,6 +386,9 @@ if __name__ == "__main__":
                         help="passthrough PCI device(s) bound to vfio-pci, e.g. 0000:01:00.0")
     parser.add_argument("--gic-version", action="store", default="3",
                         help="aarch64 GIC version under TCG (default 3)")
+    parser.add_argument("-s", "--symbolize", action="store_true",
+                        help="after qemu exits, run any [backtrace] addresses "
+                             "through llvm-symbolizer against loader.elf")
     cmdargs = parser.parse_args()
     if cmdargs.pin and cmdargs.no_pin:
         parser.error("--pin and --no-pin are mutually exclusive")

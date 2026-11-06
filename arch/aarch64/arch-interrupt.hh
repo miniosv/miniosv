@@ -35,6 +35,8 @@ typedef class sgi_interrupt inter_processor_interrupt;
 class ppi_interrupt : public interrupt {
 public:
     ppi_interrupt(gic::irq_type t, unsigned id, std::function<void ()> h);
+    ppi_interrupt(gic::irq_type t, unsigned id, std::function<bool ()> a,
+                  std::function<void ()> h);
     ~ppi_interrupt();
 private:
     gic::irq_type irq_type;

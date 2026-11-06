@@ -75,8 +75,8 @@ cp "$CONFIG_SRC/config.json"     "$ARCH_CONF/config.json"
 
 # 3. configure + build
 # Codegen must match the kernel (see COMMON in the top-level Makefile):
-# non-PIE, no stack protector, local-exec TLS, keep frame pointers.
-KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec -fno-omit-frame-pointer"
+# non-PIE, no stack protector, local-exec TLS.
+KERNEL_FLAGS="-fno-pie -fno-stack-protector -ftls-model=local-exec"
 
 mkdir -p "$BUILD_DIR"
 echo "  LLVM-LIBC configure..."
