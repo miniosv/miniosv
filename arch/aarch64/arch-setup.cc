@@ -28,6 +28,9 @@
 #include "drivers/console.hh"
 #include "drivers/pl011.hh"
 #include "early-console.hh"
+#if CONF_drivers_nvme
+#include "drivers/nvme.hh"
+#endif
 #if CONF_drivers_pci
 #include <osv/pci.hh>
 #endif
@@ -459,6 +462,9 @@ void arch_init_drivers()
 
     // Initialize all drivers
     hw::driver_manager* drvman = hw::driver_manager::instance();
+#if CONF_drivers_nvme
+    drvman->register_driver(nvme::nvme_driver::probe);
+#endif
     boot_time.event("drivers probe");
     drvman->load_all();
     drvman->list_drivers();

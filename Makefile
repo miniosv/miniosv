@@ -151,6 +151,7 @@ conf_interrupt_stack_size=0x2000
 # --- device drivers --------------------------------------------------------
 conf_drivers_acpi=1
 conf_drivers_pci=1
+conf_drivers_nvme=1
 
 ifneq ($(MAKECMDGOALS),clean)
 $(info Building into $(out))
@@ -510,6 +511,10 @@ drivers += drivers/pci-device.o
 drivers += drivers/pci-function.o
 drivers += drivers/pci-bridge.o
 drivers += drivers/msi.o
+ifeq ($(conf_drivers_nvme),1)
+drivers += drivers/nvme.o
+drivers += drivers/nvme-queue.o
+endif
 endif
 drivers += drivers/driver.o
 

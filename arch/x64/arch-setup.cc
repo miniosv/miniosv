@@ -24,6 +24,9 @@
 #if CONF_drivers_acpi
 #include "drivers/acpi.hh"
 #endif
+#if CONF_drivers_nvme
+#include "drivers/nvme.hh"
+#endif
 
 // Physical pointer to the hand-off structure filled by the UEFI stub; stored
 // by start64 in boot.S.
@@ -236,6 +239,9 @@ void arch_init_drivers()
 
     // Initialize all drivers
     hw::driver_manager* drvman = hw::driver_manager::instance();
+#if CONF_drivers_nvme
+    drvman->register_driver(nvme::nvme_driver::probe);
+#endif
     boot_time.event("drivers probe");
     drvman->load_all();
     drvman->list_drivers();
