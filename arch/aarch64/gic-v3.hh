@@ -49,6 +49,7 @@
 
 #include "gic-common.hh"
 #include <osv/spinlock.h>
+#include <osv/sched.hh>
 
 #define GICD_CTLR_WRITE_COMPLETE   (1UL << 31)
 #define GICD_CTLR_ARE_NS           (1U << 4)
@@ -288,7 +289,9 @@ private:
     u64 _typer;
 };
 
-constexpr int max_sgi_cpus = 16;
+// SGIs reach any cpu: ICC_SGI1R_EL1 carries Aff3..Aff1 and, through RS, Aff0
+// up to 255, so the only bound is the smp index to MPIDR table below.
+constexpr int max_sgi_cpus = sched::max_cpus;
 
 class gic_v3_driver : public gic_driver {
 public:
