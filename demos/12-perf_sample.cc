@@ -44,7 +44,7 @@ extern "C" void osv_app_main() {
   // Pin main thread to core
   sched::thread::pin(sched::cpu::current());
 
-  perf::PMCSampler sampler{sample_period, on_sample,
+  perf::PerfSampler sampler{sample_period, on_sample,
                            perf::PERF_COUNT_HW::CPU_CYCLES};
 
   if (!sampler.start()) {

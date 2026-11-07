@@ -171,7 +171,7 @@ struct PMCSelect {
         },
         [this, cpu] {
       // One PMU interrupt is shared by every handler: the other cpus' tables
-      // and any PMCSampler are attached to it too. Touch only the counters
+      // and any PerfSampler are attached to it too. Touch only the counters
       // this table armed on its own cpu, and ack only those -- acking the
       // whole status word would swallow a sampler's overflow.
       if (sched::cpu::current()->id != cpu)
